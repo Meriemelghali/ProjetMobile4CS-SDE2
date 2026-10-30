@@ -1,0 +1,8 @@
+# Android Studio / IntelliJ personal workspace files
+.idea/
+*.iml
+
+# Flutter build and package artifacts (also ignored by the app template)
+**/.dart_tool/
+**/build/
+**/.flutter-plugins-dependencies
