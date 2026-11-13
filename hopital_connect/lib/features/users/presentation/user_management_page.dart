@@ -1,45 +1,114 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/network/api_client.dart';
 import '../../../core/theme/app_colors.dart';
+import '../data/user_service.dart';
 import '../domain/staff_role.dart';
 import '../domain/staff_user.dart';
 
 class UserManagementPage extends StatefulWidget {
-  const UserManagementPage({
-    super.key,
-    required this.users,
-    required this.onUsersChanged,
-  });
+  const UserManagementPage({super.key, required this.service});
 
-  final List<StaffUser> users;
-  final ValueChanged<List<StaffUser>> onUsersChanged;
+  final UserService service;
 
   @override
   State<UserManagementPage> createState() => _UserManagementPageState();
 }
 
 class _UserManagementPageState extends State<UserManagementPage> {
-  late final List<StaffUser> _users = List.of(widget.users);
+  List<StaffUser> _users = const [];
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final users = await widget.service.list();
+      if (mounted) setState(() => _users = users);
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
 
   Future<void> _createUser() async {
-    final user = await showDialog<StaffUser>(
+    final input = await showDialog<_NewUserInput>(
       context: context,
-      builder: (context) => const _CreateUserDialog(),
+      builder: (_) => const _UserDialog(),
     );
-    if (user == null || !mounted) return;
-
-    final emailAlreadyUsed = _users.any(
-      (existing) => existing.email.toLowerCase() == user.email.toLowerCase(),
-    );
-    if (emailAlreadyUsed) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cette adresse e-mail existe déjà.')),
+    if (input == null || !mounted) return;
+    try {
+      final user = await widget.service.create(
+        username: input.username,
+        email: input.email,
+        password: input.password!,
+        role: input.role.apiValue,
       );
-      return;
+      if (mounted) setState(() => _users = [..._users, user]);
+    } on ApiException catch (error) {
+      _showError(error.message);
     }
+  }
 
-    setState(() => _users.add(user));
-    widget.onUsersChanged(List.unmodifiable(_users));
+  Future<void> _editUser(StaffUser user) async {
+    final edited = await showDialog<StaffUser>(
+      context: context,
+      builder: (_) => _UserDialog(user: user),
+    );
+    if (edited == null || !mounted) return;
+    try {
+      final updated = await widget.service.update(edited);
+      if (mounted) {
+        setState(
+          () => _users = [
+            for (final item in _users)
+              if (item.id == updated.id) updated else item,
+          ],
+        );
+      }
+    } on ApiException catch (error) {
+      _showError(error.message);
+    }
+  }
+
+  Future<void> _toggleActive(StaffUser user) async {
+    final updatedUser = StaffUser(
+      id: user.id,
+      displayName: user.displayName,
+      email: user.email,
+      role: user.role,
+      serviceId: user.serviceId,
+      isActive: !user.isActive,
+    );
+    try {
+      final updated = await widget.service.update(updatedUser);
+      if (mounted) {
+        setState(
+          () => _users = [
+            for (final item in _users)
+              if (item.id == updated.id) updated else item,
+          ],
+        );
+      }
+    } on ApiException catch (error) {
+      _showError(error.message);
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -49,8 +118,27 @@ class _UserManagementPageState extends State<UserManagementPage> {
         title: const Text('Comptes du personnel'),
         foregroundColor: AppColors.navy,
         backgroundColor: AppColors.background,
+        actions: [
+          IconButton(
+            tooltip: 'Actualiser',
+            onPressed: _isLoading ? null : _load,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
       ),
-      body: _users.isEmpty
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(_error!),
+                  TextButton(onPressed: _load, child: const Text('Réessayer')),
+                ],
+              ),
+            )
+          : _users.isEmpty
           ? const Center(child: Text('Aucun compte pour le moment.'))
           : ListView.separated(
               padding: const EdgeInsets.all(16),
@@ -61,7 +149,9 @@ class _UserManagementPageState extends State<UserManagementPage> {
                 return Card(
                   child: ListTile(
                     leading: CircleAvatar(
-                      backgroundColor: const Color(0xFFE1F2EF),
+                      backgroundColor: user.isActive
+                          ? const Color(0xFFE1F2EF)
+                          : const Color(0xFFECEFF1),
                       child: Text(
                         user.displayName
                             .split(' ')
@@ -72,8 +162,29 @@ class _UserManagementPageState extends State<UserManagementPage> {
                       ),
                     ),
                     title: Text(user.displayName),
-                    subtitle: Text('${user.email}\n${user.role.label}'),
+                    subtitle: Text(
+                      '${user.email}\n${user.role.label} · ${user.isActive ? 'Actif' : 'Désactivé'}',
+                    ),
                     isThreeLine: true,
+                    trailing: PopupMenuButton<String>(
+                      tooltip: 'Actions sur le compte',
+                      onSelected: (value) {
+                        if (value == 'edit') _editUser(user);
+                        if (value == 'toggle') _toggleActive(user);
+                      },
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Text('Modifier'),
+                        ),
+                        PopupMenuItem(
+                          value: 'toggle',
+                          child: Text(
+                            user.isActive ? 'Désactiver' : 'Réactiver',
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 );
               },
@@ -87,97 +198,133 @@ class _UserManagementPageState extends State<UserManagementPage> {
   }
 }
 
-class _CreateUserDialog extends StatefulWidget {
-  const _CreateUserDialog();
+class _NewUserInput {
+  const _NewUserInput({
+    required this.username,
+    required this.email,
+    required this.role,
+    this.password,
+  });
 
-  @override
-  State<_CreateUserDialog> createState() => _CreateUserDialogState();
+  final String username;
+  final String email;
+  final StaffRole role;
+  final String? password;
 }
 
-class _CreateUserDialogState extends State<_CreateUserDialog> {
+class _UserDialog extends StatefulWidget {
+  const _UserDialog({this.user});
+
+  final StaffUser? user;
+
+  @override
+  State<_UserDialog> createState() => _UserDialogState();
+}
+
+class _UserDialogState extends State<_UserDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
-  final _emailController = TextEditingController();
-  StaffRole _role = StaffRole.nurse;
+  late final _nameController = TextEditingController(
+    text: widget.user?.displayName ?? '',
+  );
+  late final _emailController = TextEditingController(
+    text: widget.user?.email ?? '',
+  );
+  final _passwordController = TextEditingController();
+  late StaffRole _role = widget.user?.role ?? StaffRole.nurse;
 
   @override
   void dispose() {
     _nameController.dispose();
     _emailController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
   void _save() {
     if (!_formKey.currentState!.validate()) return;
-    Navigator.of(context).pop(
-      StaffUser(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        displayName: _nameController.text.trim(),
-        email: _emailController.text.trim(),
-        role: _role,
-      ),
-    );
+    if (widget.user case final user?) {
+      Navigator.of(context).pop(
+        StaffUser(
+          id: user.id,
+          displayName: _nameController.text.trim(),
+          email: _emailController.text.trim(),
+          role: _role,
+          serviceId: user.serviceId,
+          isActive: user.isActive,
+        ),
+      );
+    } else {
+      Navigator.of(context).pop(
+        _NewUserInput(
+          username: _nameController.text.trim(),
+          email: _emailController.text.trim(),
+          role: _role,
+          password: _passwordController.text,
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final isEditing = widget.user != null;
     return AlertDialog(
-      title: const Text('Créer un compte du personnel'),
+      title: Text(isEditing ? 'Modifier le compte' : 'Créer un compte'),
       content: SizedBox(
         width: 420,
         child: Form(
           key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: _nameController,
-                textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(
-                  labelText: 'Nom complet',
-                  prefixIcon: Icon(Icons.person_outline),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: _nameController,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(labelText: 'Nom complet'),
+                  validator: (value) => value == null || value.trim().isEmpty
+                      ? 'Saisissez le nom complet.'
+                      : null,
                 ),
-                validator: (value) => value == null || value.trim().isEmpty
-                    ? 'Saisissez le nom complet.'
-                    : null,
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _emailController,
-                keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(
-                  labelText: 'Adresse e-mail',
-                  prefixIcon: Icon(Icons.email_outlined),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(labelText: 'Adresse e-mail'),
+                  validator: (value) {
+                    final email = value?.trim() ?? '';
+                    return email.contains('@')
+                        ? null
+                        : 'Saisissez une adresse e-mail valide.';
+                  },
                 ),
-                validator: (value) {
-                  final email = value?.trim() ?? '';
-                  if (email.isEmpty || !email.contains('@')) {
-                    return 'Saisissez une adresse e-mail valide.';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<StaffRole>(
-                initialValue: _role,
-                decoration: const InputDecoration(
-                  labelText: 'Rôle',
-                  prefixIcon: Icon(Icons.badge_outlined),
-                ),
-                items: [
-                  for (final role in StaffRole.values)
-                    DropdownMenuItem(value: role, child: Text(role.label)),
+                if (!isEditing) ...[
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _passwordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Mot de passe temporaire',
+                    ),
+                    validator: (value) => (value?.length ?? 0) < 10
+                        ? 'Utilisez au moins 10 caractères.'
+                        : null,
+                  ),
                 ],
-                onChanged: (role) {
-                  if (role != null) setState(() => _role = role);
-                },
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Ce compte sera conservé en mémoire uniquement pendant cette session.',
-                style: TextStyle(fontSize: 12, color: Color(0xFF687B86)),
-              ),
-            ],
+                const SizedBox(height: 12),
+                DropdownButtonFormField<StaffRole>(
+                  initialValue: _role,
+                  decoration: const InputDecoration(labelText: 'Rôle'),
+                  items: [
+                    for (final role in StaffRole.values)
+                      DropdownMenuItem(value: role, child: Text(role.label)),
+                  ],
+                  onChanged: (role) {
+                    if (role != null) setState(() => _role = role);
+                  },
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -186,7 +333,10 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Annuler'),
         ),
-        FilledButton(onPressed: _save, child: const Text('Créer le compte')),
+        FilledButton(
+          onPressed: _save,
+          child: Text(isEditing ? 'Enregistrer' : 'Créer le compte'),
+        ),
       ],
     );
   }

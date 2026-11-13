@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/widgets.dart';
+import '../../services/domain/hospital_service.dart';
+import '../domain/handover.dart';
 
 class HandoversTab extends StatelessWidget {
-  const HandoversTab({super.key, required this.handovers});
+  const HandoversTab({super.key, required this.handovers, this.onHandoverTap});
 
   final List<Handover> handovers;
+  final ValueChanged<Handover>? onHandoverTap;
 
   @override
   Widget build(BuildContext context) {
@@ -18,91 +21,92 @@ class HandoversTab extends StatelessWidget {
           subtitle: 'Consignes opérationnelles non médicales',
         ),
         const SizedBox(height: 14),
+        if (handovers.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 32),
+            child: Text(
+              'Aucune transmission pour le moment.',
+              textAlign: TextAlign.center,
+            ),
+          ),
         for (final handover in handovers) ...[
-          HandoverCard(handover: handover),
+          HandoverCard(
+            handover: handover,
+            onTap: () => onHandoverTap?.call(handover),
+          ),
           const SizedBox(height: 12),
         ],
         const SizedBox(height: 72),
-        const DemoNotice(),
       ],
     );
   }
 }
 
-class Handover {
-  const Handover({
-    required this.title,
-    required this.message,
-    required this.time,
-    required this.author,
-    this.important = false,
-  });
-
-  final String title;
-  final String message;
-  final String time;
-  final String author;
-  final bool important;
-}
-
 class HandoverCard extends StatelessWidget {
-  const HandoverCard({super.key, required this.handover});
+  const HandoverCard({super.key, required this.handover, this.onTap});
 
   final Handover handover;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: handover.important
-              ? const Color(0xFFB9DFD6)
-              : const Color(0xFFE5ECEF),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: handover.important
+                ? const Color(0xFFB9DFD6)
+                : const Color(0xFFE5ECEF),
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  handover.title,
-                  style: const TextStyle(
-                    color: AppColors.navy,
-                    fontWeight: FontWeight.w700,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    handover.title,
+                    style: const TextStyle(
+                      color: AppColors.navy,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
-              ),
-              if (handover.important)
-                const Icon(
-                  Icons.push_pin_outlined,
-                  color: AppColors.mint,
-                  size: 18,
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            handover.message,
-            style: const TextStyle(color: Color(0xFF536A77), height: 1.45),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            '${handover.author} · ${handover.time}',
-            style: const TextStyle(color: Color(0xFF8797A0), fontSize: 12),
-          ),
-        ],
+                if (handover.important)
+                  const Icon(
+                    Icons.push_pin_outlined,
+                    color: AppColors.mint,
+                    size: 18,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              handover.message,
+              style: const TextStyle(color: Color(0xFF536A77), height: 1.45),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '${handover.author} · ${handover.time}',
+              style: const TextStyle(color: Color(0xFF8797A0), fontSize: 12),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
 class NewHandoverDialog extends StatefulWidget {
-  const NewHandoverDialog({super.key});
+  const NewHandoverDialog({super.key, required this.services});
+
+  final List<HospitalService> services;
 
   @override
   State<NewHandoverDialog> createState() => _NewHandoverDialogState();
@@ -112,6 +116,8 @@ class _NewHandoverDialogState extends State<NewHandoverDialog> {
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
   final _messageController = TextEditingController();
+  late HospitalService _service = widget.services.first;
+  bool _important = false;
 
   @override
   void dispose() {
@@ -124,10 +130,14 @@ class _NewHandoverDialogState extends State<NewHandoverDialog> {
     if (!_formKey.currentState!.validate()) return;
     Navigator.of(context).pop(
       Handover(
+        id: '',
+        serviceId: _service.id,
+        authorId: '',
         title: _titleController.text.trim(),
         message: _messageController.text.trim(),
-        time: 'À l’instant',
-        author: 'Personnel connecté',
+        createdAt: DateTime.now(),
+        author: '',
+        important: _important,
       ),
     );
   }
@@ -150,6 +160,18 @@ class _NewHandoverDialogState extends State<NewHandoverDialog> {
                     : null,
               ),
               const SizedBox(height: 12),
+              DropdownButtonFormField<HospitalService>(
+                initialValue: _service,
+                decoration: const InputDecoration(labelText: 'Service'),
+                items: [
+                  for (final service in widget.services)
+                    DropdownMenuItem(value: service, child: Text(service.name)),
+                ],
+                onChanged: (value) {
+                  if (value != null) setState(() => _service = value);
+                },
+              ),
+              const SizedBox(height: 12),
               TextFormField(
                 controller: _messageController,
                 minLines: 3,
@@ -162,6 +184,14 @@ class _NewHandoverDialogState extends State<NewHandoverDialog> {
                 validator: (value) => value == null || value.trim().isEmpty
                     ? 'Ajoutez une information.'
                     : null,
+              ),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _important,
+                onChanged: (value) =>
+                    setState(() => _important = value ?? false),
+                title: const Text('Marquer comme important'),
+                controlAffinity: ListTileControlAffinity.leading,
               ),
             ],
           ),

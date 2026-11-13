@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
-import '../../users/domain/staff_role.dart';
+import '../../../core/network/api_client.dart';
+import '../data/auth_service.dart';
 import '../../dashboard/presentation/dashboard_page.dart';
+import 'register_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -16,7 +18,7 @@ class _LoginPageState extends State<LoginPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _hidePassword = true;
-  StaffRole _role = StaffRole.nurse;
+  bool _isSigningIn = false;
 
   @override
   void dispose() {
@@ -25,14 +27,34 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-  void _signIn() {
+  Future<void> _signIn() async {
     if (!_formKey.currentState!.validate()) return;
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) =>
-            DashboardPage(email: _emailController.text.trim(), role: _role),
-      ),
-    );
+    setState(() => _isSigningIn = true);
+    try {
+      final session = await AuthService().login(
+        _emailController.text.trim(),
+        _passwordController.text,
+      );
+      if (!mounted) return;
+      await Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) => DashboardPage(session: session),
+        ),
+      );
+    } on ApiException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _isSigningIn = false);
+    }
+  }
+
+  Future<void> _openRegistration() async {
+    await Navigator.of(
+      context,
+    ).push<void>(MaterialPageRoute<void>(builder: (_) => const RegisterPage()));
   }
 
   @override
@@ -68,7 +90,7 @@ class _LoginPageState extends State<LoginPage> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Text(
-                            'Connexion au personnel',
+                            'Connexion',
                             style: Theme.of(context).textTheme.titleLarge
                                 ?.copyWith(
                                   color: AppColors.navy,
@@ -77,7 +99,7 @@ class _LoginPageState extends State<LoginPage> {
                           ),
                           const SizedBox(height: 8),
                           const Text(
-                            'Connectez-vous pour consulter votre service et votre planning.',
+                            'Connectez-vous à votre compte HôpitalConnect.',
                             style: TextStyle(
                               color: Color(0xFF687B86),
                               height: 1.5,
@@ -102,25 +124,6 @@ class _LoginPageState extends State<LoginPage> {
                                 return 'Vérifiez le format de votre adresse e-mail.';
                               }
                               return null;
-                            },
-                          ),
-                          const SizedBox(height: 18),
-                          const _FieldLabel('Rôle de démonstration'),
-                          const SizedBox(height: 8),
-                          DropdownButtonFormField<StaffRole>(
-                            initialValue: _role,
-                            decoration: const InputDecoration(
-                              prefixIcon: Icon(Icons.badge_outlined),
-                            ),
-                            items: [
-                              for (final role in StaffRole.values)
-                                DropdownMenuItem(
-                                  value: role,
-                                  child: Text(role.label),
-                                ),
-                            ],
-                            onChanged: (role) {
-                              if (role != null) setState(() => _role = role);
                             },
                           ),
                           const SizedBox(height: 18),
@@ -151,17 +154,32 @@ class _LoginPageState extends State<LoginPage> {
                               if (value == null || value.isEmpty) {
                                 return 'Saisissez votre mot de passe.';
                               }
-                              if (value.length < 6) {
-                                return 'Le mot de passe doit contenir au moins 6 caractères.';
+                              if (value.length < 10) {
+                                return 'Le mot de passe doit contenir au moins 10 caractères.';
                               }
                               return null;
                             },
                           ),
+                          const SizedBox(height: 8),
+                          TextButton(
+                            onPressed: _isSigningIn ? null : _openRegistration,
+                            child: const Text('Créer un compte patient'),
+                          ),
                           const SizedBox(height: 24),
                           FilledButton.icon(
-                            onPressed: _signIn,
-                            icon: const Icon(Icons.arrow_forward),
-                            label: const Text('Se connecter'),
+                            onPressed: _isSigningIn ? null : _signIn,
+                            icon: _isSigningIn
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.arrow_forward),
+                            label: Text(
+                              _isSigningIn ? 'Connexion…' : 'Se connecter',
+                            ),
                             style: FilledButton.styleFrom(
                               minimumSize: const Size.fromHeight(54),
                               backgroundColor: AppColors.blue,
@@ -179,17 +197,18 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                  const Wrap(
+                    alignment: WrapAlignment.center,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 7,
                     children: [
                       Icon(
                         Icons.verified_user_outlined,
                         size: 16,
                         color: AppColors.blue,
                       ),
-                      SizedBox(width: 7),
                       Text(
-                        'Accès réservé au personnel hospitalier',
+                        'Accès sécurisé pour les patients et le personnel',
                         style: TextStyle(
                           color: Color(0xFF687B86),
                           fontSize: 12,
@@ -200,7 +219,7 @@ class _LoginPageState extends State<LoginPage> {
                   const SizedBox(height: 16),
                   const Center(
                     child: Text(
-                      'Mode démonstration : les rôles et les données ne sont pas encore enregistrés sur un serveur.',
+                      'Votre rôle et vos droits sont chargés depuis votre compte.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: Color(0xFF81919A), fontSize: 11),
                     ),

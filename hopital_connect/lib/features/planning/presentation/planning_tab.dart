@@ -2,11 +2,15 @@ import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/widgets.dart';
+import '../../services/domain/hospital_service.dart';
+import '../../users/domain/staff_user.dart';
+import '../domain/shift.dart';
 
 class ScheduleTab extends StatelessWidget {
-  const ScheduleTab({super.key, required this.shifts});
+  const ScheduleTab({super.key, required this.shifts, this.onShiftTap});
 
   final List<Shift> shifts;
+  final ValueChanged<Shift>? onShiftTap;
 
   @override
   Widget build(BuildContext context) {
@@ -15,46 +19,45 @@ class ScheduleTab extends StatelessWidget {
       children: [
         const SectionIntro(
           title: 'Cette semaine',
-          subtitle: 'Vos horaires de démonstration',
+          subtitle: 'Gardes et horaires enregistrés',
         ),
         const SizedBox(height: 18),
+        if (shifts.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 32),
+            child: Text(
+              'Aucune garde n’est prévue.',
+              textAlign: TextAlign.center,
+            ),
+          ),
         for (final shift in shifts) ...[
           ShiftCard(
             day: shift.day,
             time: shift.time,
-            role: shift.role,
-            service: shift.service,
+            role: shift.userName.isEmpty
+                ? shift.role
+                : '${shift.role} · ${shift.userName}',
+            service: shift.serviceName,
             color: shift.color,
+            onTap: () => onShiftTap?.call(shift),
           ),
           const SizedBox(height: 12),
         ],
         const SizedBox(height: 18),
-        const DemoNotice(),
       ],
     );
   }
 }
 
-class Shift {
-  const Shift({
-    required this.day,
-    required this.time,
-    required this.role,
-    required this.service,
-    required this.color,
+class NewShiftDialog extends StatefulWidget {
+  const NewShiftDialog({
+    super.key,
+    required this.services,
+    required this.users,
   });
 
-  final String day;
-  final String time;
-  final String role;
-  final String service;
-  final Color color;
-}
-
-class NewShiftDialog extends StatefulWidget {
-  const NewShiftDialog({super.key, required this.services});
-
-  final List<String> services;
+  final List<HospitalService> services;
+  final List<StaffUser> users;
 
   @override
   State<NewShiftDialog> createState() => _NewShiftDialogState();
@@ -62,18 +65,11 @@ class NewShiftDialog extends StatefulWidget {
 
 class _NewShiftDialogState extends State<NewShiftDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _staffController = TextEditingController();
   DateTime _date = DateTime.now();
   TimeOfDay _start = const TimeOfDay(hour: 7, minute: 0);
   TimeOfDay _end = const TimeOfDay(hour: 15, minute: 0);
-  String _staffRole = 'Infirmier';
-  late String _service = widget.services.first;
-
-  @override
-  void dispose() {
-    _staffController.dispose();
-    super.dispose();
-  }
+  late StaffUser _user = widget.users.first;
+  late HospitalService _service = widget.services.first;
 
   Future<void> _chooseDate() async {
     final selected = await showDatePicker(
@@ -132,13 +128,30 @@ class _NewShiftDialogState extends State<NewShiftDialog> {
       );
       return;
     }
+    final start = DateTime(
+      _date.year,
+      _date.month,
+      _date.day,
+      _start.hour,
+      _start.minute,
+    );
+    final end = DateTime(
+      _date.year,
+      _date.month,
+      _date.day,
+      _end.hour,
+      _end.minute,
+    );
     Navigator.of(context).pop(
       Shift(
-        day: _formatDate(),
-        time: '${_start.format(context)} – ${_end.format(context)}',
-        role: '$_staffRole · ${_staffController.text.trim()}',
-        service: _service,
-        color: _staffRole == 'Médecin' ? AppColors.blue : AppColors.mint,
+        id: '',
+        userId: _user.id,
+        serviceId: _service.id,
+        start: start,
+        end: end,
+        role: _user.role.label,
+        userName: _user.displayName,
+        serviceName: _service.name,
       ),
     );
   }
@@ -155,42 +168,27 @@ class _NewShiftDialogState extends State<NewShiftDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextFormField(
-                  controller: _staffController,
-                  decoration: const InputDecoration(
-                    labelText: 'Nom du membre du personnel',
-                    prefixIcon: Icon(Icons.person_outline),
-                  ),
-                  validator: (value) => value == null || value.trim().isEmpty
-                      ? 'Indiquez le nom du membre.'
-                      : null,
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: _staffRole,
-                  decoration: const InputDecoration(labelText: 'Fonction'),
-                  items: const [
-                    DropdownMenuItem(value: 'Médecin', child: Text('Médecin')),
-                    DropdownMenuItem(
-                      value: 'Infirmier',
-                      child: Text('Infirmier'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'Personnel',
-                      child: Text('Personnel'),
-                    ),
+                DropdownButtonFormField<StaffUser>(
+                  initialValue: _user,
+                  decoration: const InputDecoration(labelText: 'Personnel'),
+                  items: [
+                    for (final user in widget.users)
+                      DropdownMenuItem(
+                        value: user,
+                        child: Text('${user.displayName} · ${user.role.label}'),
+                      ),
                   ],
                   onChanged: (value) {
-                    if (value != null) setState(() => _staffRole = value);
+                    if (value != null) setState(() => _user = value);
                   },
                 ),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
+                DropdownButtonFormField<HospitalService>(
                   initialValue: _service,
                   decoration: const InputDecoration(labelText: 'Service'),
                   items: [
                     for (final service in widget.services)
-                      DropdownMenuItem(value: service, child: Text(service)),
+                      DropdownMenuItem(value: service, child: Text(service.name)),
                   ],
                   onChanged: (value) {
                     if (value != null) setState(() => _service = value);
@@ -247,6 +245,7 @@ class ShiftCard extends StatelessWidget {
     required this.role,
     required this.service,
     required this.color,
+    this.onTap,
   });
 
   final String day;
@@ -254,10 +253,14 @@ class ShiftCard extends StatelessWidget {
   final String role;
   final String service;
   final Color color;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -308,6 +311,7 @@ class ShiftCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
       ),
     );
   }

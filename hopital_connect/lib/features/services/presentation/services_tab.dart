@@ -1,18 +1,33 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
-import '../../../shared/widgets.dart';
+import '../domain/hospital_service.dart';
 
 class ServiceTab extends StatelessWidget {
-  const ServiceTab({super.key, required this.services});
+  const ServiceTab({
+    super.key,
+    required this.services,
+    this.canEdit = false,
+    this.onEdit,
+  });
 
   final List<HospitalService> services;
+  final bool canEdit;
+  final ValueChanged<HospitalService>? onEdit;
 
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
+        if (services.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 32),
+            child: Text(
+              'Aucun service n’est encore enregistré.',
+              textAlign: TextAlign.center,
+            ),
+          ),
         for (final service in services) ...[
           Container(
             padding: const EdgeInsets.all(22),
@@ -24,13 +39,24 @@ class ServiceTab extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const CircleAvatar(
-                  radius: 26,
-                  backgroundColor: Color(0xFFE1F2EF),
-                  child: Icon(
-                    Icons.medical_services_outlined,
-                    color: AppColors.blue,
-                  ),
+                Row(
+                  children: [
+                    const CircleAvatar(
+                      radius: 26,
+                      backgroundColor: Color(0xFFE1F2EF),
+                      child: Icon(
+                        Icons.medical_services_outlined,
+                        color: AppColors.blue,
+                      ),
+                    ),
+                    const Spacer(),
+                    if (canEdit)
+                      IconButton(
+                        tooltip: 'Modifier le service',
+                        onPressed: () => onEdit?.call(service),
+                        icon: const Icon(Icons.edit_outlined),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 16),
                 Text(
@@ -59,48 +85,15 @@ class ServiceTab extends StatelessWidget {
           ),
           const SizedBox(height: 12),
         ],
-        const SizedBox(height: 24),
-        const SectionIntro(
-          title: 'Équipe de démonstration',
-          subtitle: 'Membres fictifs, communs aux services de la maquette',
-        ),
-        const SizedBox(height: 12),
-        const TeamMember(
-          name: 'Samira Benali',
-          role: 'Médecin',
-          initials: 'SB',
-        ),
-        const TeamMember(
-          name: 'Yassine Amrani',
-          role: 'Infirmier',
-          initials: 'YA',
-        ),
-        const TeamMember(
-          name: 'Nour Haddad',
-          role: 'Infirmière',
-          initials: 'NH',
-        ),
-        const SizedBox(height: 12),
-        const DemoNotice(),
       ],
     );
   }
 }
 
-class HospitalService {
-  const HospitalService({
-    required this.name,
-    required this.location,
-    required this.description,
-  });
-
-  final String name;
-  final String location;
-  final String description;
-}
-
 class NewServiceDialog extends StatefulWidget {
-  const NewServiceDialog({super.key});
+  const NewServiceDialog({super.key, this.service});
+
+  final HospitalService? service;
 
   @override
   State<NewServiceDialog> createState() => _NewServiceDialogState();
@@ -108,9 +101,15 @@ class NewServiceDialog extends StatefulWidget {
 
 class _NewServiceDialogState extends State<NewServiceDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
-  final _locationController = TextEditingController();
-  final _descriptionController = TextEditingController();
+  late final _nameController = TextEditingController(
+    text: widget.service?.name ?? '',
+  );
+  late final _locationController = TextEditingController(
+    text: widget.service?.location ?? '',
+  );
+  late final _descriptionController = TextEditingController(
+    text: widget.service?.description ?? '',
+  );
 
   @override
   void dispose() {
@@ -124,9 +123,11 @@ class _NewServiceDialogState extends State<NewServiceDialog> {
     if (!_formKey.currentState!.validate()) return;
     Navigator.of(context).pop(
       HospitalService(
+        id: widget.service?.id ?? '',
         name: _nameController.text.trim(),
         location: _locationController.text.trim(),
         description: _descriptionController.text.trim(),
+        isActive: widget.service?.isActive ?? true,
       ),
     );
   }
@@ -134,7 +135,9 @@ class _NewServiceDialogState extends State<NewServiceDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Ajouter un service'),
+      title: Text(
+        widget.service == null ? 'Ajouter un service' : 'Modifier le service',
+      ),
       content: SizedBox(
         width: 420,
         child: Form(
@@ -187,46 +190,11 @@ class _NewServiceDialogState extends State<NewServiceDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Annuler'),
         ),
-        FilledButton(onPressed: _save, child: const Text('Enregistrer')),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('Enregistrer'),
+        ),
       ],
-    );
-  }
-}
-
-class TeamMember extends StatelessWidget {
-  const TeamMember({
-    super.key,
-    required this.name,
-    required this.role,
-    required this.initials,
-  });
-
-  final String name;
-  final String role;
-  final String initials;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(vertical: 4),
-      leading: CircleAvatar(
-        backgroundColor: const Color(0xFFE1F2EF),
-        child: Text(
-          initials,
-          style: const TextStyle(
-            color: AppColors.blue,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
-      title: Text(
-        name,
-        style: const TextStyle(
-          color: AppColors.navy,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      subtitle: Text(role),
     );
   }
 }
