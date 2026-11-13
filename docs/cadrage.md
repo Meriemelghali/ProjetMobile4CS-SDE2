@@ -9,14 +9,15 @@ Dans un hôpital, les équipes doivent connaître leur planning, leur service d�
 - **Administrateur** : configurer les comptes, les rôles et les services.
 - **Médecin** : consulter son planning et les transmissions de son service.
 - **Personnel soignant** : consulter son planning et les transmissions de son service.
+- **Patient** : créer un compte avec le rôle patient par défaut et consulter un espace de compte minimal. Seul l’administrateur peut modifier son rôle.
 
-Un patient n’est pas utilisateur dans la première version : l’idée retenue est une application interne. Le professeur évalue le projet, mais n’a pas besoin d’un compte dans l’application, sauf consigne spécifique.
+Le mode patient minimal n’expose ni les plannings ni les transmissions du personnel. Le professeur évalue le projet, mais n’a pas besoin d’un compte dans l’application, sauf consigne spécifique.
 
 ## 3. Fonctions du MVP
 
 ### F1 — Authentification et autorisations
 
-Un membre du personnel se connecte. L’application affiche les fonctions permises pour son rôle. Un utilisateur ne peut pas administrer les comptes s’il n’a pas le rôle administrateur.
+Un utilisateur se connecte ou crée un compte patient. L’inscription attribue toujours le rôle patient côté serveur ; seul un administrateur peut modifier le rôle. L’application affiche les fonctions permises pour le rôle courant et l’API vérifie les autorisations côté serveur.
 
 ### F2 — Services et équipes
 
@@ -34,7 +35,7 @@ Pour le prototype étudiant, ne saisir aucune donnée réelle de patient ni info
 
 ## 4. Fonctions hors MVP
 
-- Espace patient et prise de rendez-vous.
+- Prise de rendez-vous par les patients.
 - Dossiers médicaux et prescriptions.
 - Pharmacie, commandes et stock.
 - Gestion exhaustive de l’hôpital.
@@ -106,7 +107,7 @@ Corriger les parcours, ajouter des données de démonstration fictives, vérifie
 ## 10. Première séance de travail
 
 1. Confirmer la pile technique et les exigences avec l’enseignant.
-2. Faire valider le MVP et décider si « patient », rendez-vous et dossier médical sont réellement exigés.
+2. Faire valider le MVP et décider si les rendez-vous et le dossier médical sont réellement exigés.
 3. Affecter un responsable à chaque lot et fixer des jalons internes.
 4. Créer les maquettes des écrans Connexion, Accueil, Planning et Transmissions.
 5. Une fois la technologie confirmée, initialiser le projet directement dans ce dépôt.

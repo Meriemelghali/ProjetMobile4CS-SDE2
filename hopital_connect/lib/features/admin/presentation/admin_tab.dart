@@ -34,7 +34,7 @@ class AdminTab extends StatelessWidget {
         InfoCard(
           icon: Icons.groups_outlined,
           title: 'Comptes du personnel',
-          value: '$usersCount compte(s) de démonstration',
+          value: '$usersCount compte(s)',
           color: AppColors.blue,
         ),
         const SizedBox(height: 10),
@@ -47,14 +47,14 @@ class AdminTab extends StatelessWidget {
         InfoCard(
           icon: Icons.local_hospital_outlined,
           title: 'Services',
-          value: '$servicesCount service(s) de démonstration',
+          value: '$servicesCount service(s)',
           color: AppColors.mint,
         ),
         const SizedBox(height: 12),
         InfoCard(
           icon: Icons.calendar_month_outlined,
           title: 'Plannings',
-          value: '$shiftsCount gardes fictives dans le planning',
+          value: '$shiftsCount garde(s) planifiée(s)',
           color: Color(0xFF8797A0),
         ),
         const SizedBox(height: 16),
@@ -69,8 +69,6 @@ class AdminTab extends StatelessWidget {
           icon: const Icon(Icons.add_business_outlined),
           label: const Text('Ajouter un service'),
         ),
-        const SizedBox(height: 18),
-        const DemoNotice(),
       ],
     );
   }

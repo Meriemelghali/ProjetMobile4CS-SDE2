@@ -1,9 +1,5 @@
 import 'staff_role.dart';
 
-/// Compte d'un membre du personnel dans le modèle de l'application.
-///
-/// Ce modèle ne sauvegarde pas encore les comptes : il décrit seulement leurs
-/// données. La persistance et l'authentification seront ajoutées séparément.
 class StaffUser {
   const StaffUser({
     required this.id,
@@ -20,4 +16,35 @@ class StaffUser {
   final StaffRole role;
   final String? serviceId;
   final bool isActive;
+
+  factory StaffUser.fromJson(Map<String, dynamic> json) {
+    final service = json['serviceId'];
+    return StaffUser(
+      id: _id(json['_id'] ?? json['id']),
+      displayName: (json['username'] ?? json['displayName'] ?? json['name'])
+              as String? ??
+          '',
+      email: json['email'] as String? ?? '',
+      role: StaffRole.fromApiValue(json['role'] as String? ?? ''),
+      serviceId: service == null
+          ? null
+          : service is Map<String, dynamic>
+          ? _id(service['_id'] ?? service['id'])
+          : service.toString(),
+      isActive: json['active'] as bool? ?? json['isActive'] as bool? ?? true,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'username': displayName,
+    'email': email,
+    'role': role.apiValue,
+    'serviceId': serviceId,
+    'active': isActive,
+  };
+}
+
+String _id(Object? value) {
+  if (value is Map<String, dynamic>) return _id(value['_id'] ?? value['id']);
+  return value?.toString() ?? '';
 }

@@ -37,7 +37,7 @@ class DemoNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Text(
-      'Prototype étudiant · données fictives · aucune connexion serveur.',
+      'Prototype étudiant · informations chargées depuis le serveur.',
       textAlign: TextAlign.center,
       style: TextStyle(color: Color(0xFF81919A), fontSize: 12),
     );

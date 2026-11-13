@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 
 import 'core/theme/app_colors.dart';
 import 'features/auth/presentation/login_page.dart';
+import 'features/dashboard/presentation/dashboard_page.dart';
+import 'core/session/app_session.dart';
 
 class HopitalConnectApp extends StatelessWidget {
-  const HopitalConnectApp({super.key});
+  const HopitalConnectApp({super.key, this.initialSession});
+
+  final AppSession? initialSession;
 
   @override
   Widget build(BuildContext context) {
@@ -41,7 +45,9 @@ class HopitalConnectApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const LoginPage(),
+      home: initialSession == null
+          ? const LoginPage()
+          : DashboardPage(session: initialSession!),
     );
   }
 }
