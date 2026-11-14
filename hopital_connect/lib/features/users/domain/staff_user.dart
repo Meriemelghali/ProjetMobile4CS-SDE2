@@ -6,6 +6,7 @@ class StaffUser {
     required this.displayName,
     required this.email,
     required this.role,
+    this.roles = const [],
     this.serviceId,
     this.serviceIds = const [],
     this.specialty = '',
@@ -28,6 +29,7 @@ class StaffUser {
   final String displayName;
   final String email;
   final StaffRole role;
+  final List<StaffRole> roles;
   final String? serviceId;
   final List<String> serviceIds;
   final String specialty;
@@ -45,6 +47,8 @@ class StaffUser {
   final bool resultNotifications;
   final bool reminderNotifications;
 
+  List<StaffRole> get assignedRoles => roles.isEmpty ? [role] : roles;
+
   factory StaffUser.fromJson(Map<String, dynamic> json) {
     final service = json['serviceId'];
     final serviceValues = json['serviceIds'];
@@ -53,6 +57,11 @@ class StaffUser {
         ? preferences
         : const <String, dynamic>{};
     final birthDate = json['birthDate'];
+    final role = StaffRole.fromApiValue(json['role'] as String? ?? '');
+    final rawRoles = json['roles'];
+    final roles = rawRoles is List
+        ? rawRoles.whereType<String>().map(StaffRole.fromApiValue).toList()
+        : <StaffRole>[];
     return StaffUser(
       id: _id(json['_id'] ?? json['id']),
       displayName:
@@ -75,7 +84,8 @@ class StaffUser {
       resultNotifications: notificationPreferences['results'] as bool? ?? true,
       reminderNotifications:
           notificationPreferences['reminders'] as bool? ?? true,
-      role: StaffRole.fromApiValue(json['role'] as String? ?? ''),
+      role: role,
+      roles: roles.isEmpty ? [role] : roles,
       serviceId: service == null
           ? null
           : service is Map<String, dynamic>
@@ -106,6 +116,7 @@ class StaffUser {
     'username': displayName,
     'email': email,
     'role': role.apiValue,
+    'roles': assignedRoles.map((item) => item.apiValue).toList(),
     'serviceId': serviceId,
     'serviceIds': serviceIds,
     'specialty': specialty,

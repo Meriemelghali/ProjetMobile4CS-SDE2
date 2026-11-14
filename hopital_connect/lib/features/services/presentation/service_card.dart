@@ -12,41 +12,37 @@ import '../domain/hospital_service.dart';
 /// Palette de couleurs par type de service — aide à identifier visuellement
 /// la catégorie médicale sans lire le texte.
 const Map<ServiceType, Color> _typeColors = {
-  ServiceType.medecine:    Color(0xFF176B87), // Bleu
-  ServiceType.chirurgie:   Color(0xFF8B45A0), // Violet
-  ServiceType.urgences:    Color(0xFFD64045), // Rouge
-  ServiceType.pediatrie:   Color(0xFF36A98B), // Vert menthe
-  ServiceType.gynecologie: Color(0xFFE0689A), // Rose
-  ServiceType.radiologie:  Color(0xFF5B6BBF), // Bleu indigo
-  ServiceType.laboratoire: Color(0xFFE8891A), // Orange
-  ServiceType.reanimation: Color(0xFFC0392B), // Rouge foncé
-  ServiceType.psychiatrie: Color(0xFF2E7D32), // Vert foncé
-  ServiceType.autre:       Color(0xFF607D8B), // Gris bleuté
+  ServiceType.medical: Color(0xFF176B87),
+  ServiceType.surgical: Color(0xFF8B45A0),
+  ServiceType.emergency: Color(0xFFD64045),
+  ServiceType.intensiveCare: Color(0xFFC0392B),
+  ServiceType.maternity: Color(0xFFE0689A),
+  ServiceType.medicoTechnical: Color(0xFF5B6BBF),
+  ServiceType.administrative: Color(0xFFE8891A),
+  ServiceType.other: Color(0xFF607D8B),
 };
 
 /// Icônes par type de service pour renforcer l'identité visuelle.
 final Map<ServiceType, IconData> _typeIcons = {
-  ServiceType.medecine:    Icons.favorite_outline,
-  ServiceType.chirurgie:   Icons.cut_outlined,
-  ServiceType.urgences:    Icons.emergency_outlined,
-  ServiceType.pediatrie:   Icons.child_care_outlined,
-  ServiceType.gynecologie: Icons.pregnant_woman_outlined,
-  ServiceType.radiologie:  Icons.biotech_outlined,
-  ServiceType.laboratoire: Icons.science_outlined,
-  ServiceType.reanimation: Icons.monitor_heart_outlined,
-  ServiceType.psychiatrie: Icons.psychology_outlined,
-  ServiceType.autre:       Icons.medical_services_outlined,
+  ServiceType.medical: Icons.favorite_outline,
+  ServiceType.surgical: Icons.cut_outlined,
+  ServiceType.emergency: Icons.emergency_outlined,
+  ServiceType.intensiveCare: Icons.monitor_heart_outlined,
+  ServiceType.maternity: Icons.child_care_outlined,
+  ServiceType.medicoTechnical: Icons.biotech_outlined,
+  ServiceType.administrative: Icons.business_outlined,
+  ServiceType.other: Icons.medical_services_outlined,
 };
 
 /// Carte d'un service hospitalier dans la liste.
 class ServiceCard extends StatelessWidget {
   const ServiceCard({
     super.key,
-    required this.service,  // Service à afficher
-    this.canEdit = false,   // true = affiche les boutons admin
-    this.onEdit,            // Callback bouton Modifier
-    this.onToggleActive,    // Callback bouton toggle actif/inactif
-    this.onTap,             // Callback tap sur la carte → détail
+    required this.service, // Service à afficher
+    this.canEdit = false, // true = affiche les boutons admin
+    this.onEdit, // Callback bouton Modifier
+    this.onToggleActive, // Callback bouton toggle actif/inactif
+    this.onTap, // Callback tap sur la carte → détail
   });
 
   final HospitalService service;
@@ -57,10 +53,12 @@ class ServiceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isActive  = service.isActive;
+    final isActive = service.isActive;
     // Couleur et icône selon le type de service
-    final typeColor = _typeColors[service.serviceType] ?? const Color(0xFF607D8B);
-    final typeIcon  = _typeIcons[service.serviceType]  ?? Icons.medical_services_outlined;
+    final typeColor =
+        _typeColors[service.serviceType] ?? const Color(0xFF607D8B);
+    final typeIcon =
+        _typeIcons[service.serviceType] ?? Icons.medical_services_outlined;
 
     return AnimatedOpacity(
       duration: const Duration(milliseconds: 250),
@@ -74,7 +72,9 @@ class ServiceCard extends StatelessWidget {
             color: Colors.white,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: isActive ? const Color(0xFFE5ECEF) : const Color(0xFFD0D8DC),
+              color: isActive
+                  ? const Color(0xFFE5ECEF)
+                  : const Color(0xFFD0D8DC),
             ),
             boxShadow: [
               BoxShadow(
@@ -94,7 +94,9 @@ class ServiceCard extends StatelessWidget {
                 height: 5,
                 decoration: BoxDecoration(
                   color: isActive ? typeColor : const Color(0xFFD0D8DC),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(20),
+                  ),
                 ),
               ),
 
@@ -111,16 +113,21 @@ class ServiceCard extends StatelessWidget {
                       children: [
                         // Icône du type de service
                         Container(
-                          width: 44, height: 44,
+                          width: 44,
+                          height: 44,
                           decoration: BoxDecoration(
                             color: isActive
                                 ? typeColor.withValues(alpha: 0.12)
                                 : const Color(0xFFEEF2F4),
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Icon(typeIcon,
-                              color: isActive ? typeColor : const Color(0xFF9AA9B0),
-                              size: 22),
+                          child: Icon(
+                            typeIcon,
+                            color: isActive
+                                ? typeColor
+                                : const Color(0xFF9AA9B0),
+                            size: 22,
+                          ),
                         ),
                         const SizedBox(width: 12),
 
@@ -133,7 +140,9 @@ class ServiceCard extends StatelessWidget {
                               Text(
                                 service.name,
                                 style: TextStyle(
-                                  color: isActive ? AppColors.navy : const Color(0xFF687B86),
+                                  color: isActive
+                                      ? AppColors.navy
+                                      : const Color(0xFF687B86),
                                   fontSize: 16,
                                   fontWeight: FontWeight.w700,
                                   height: 1.2,
@@ -147,7 +156,9 @@ class ServiceCard extends StatelessWidget {
                                   Text(
                                     service.serviceType.label,
                                     style: TextStyle(
-                                      color: isActive ? typeColor : const Color(0xFF9AA9B0),
+                                      color: isActive
+                                          ? typeColor
+                                          : const Color(0xFF9AA9B0),
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -183,7 +194,9 @@ class ServiceCard extends StatelessWidget {
                                       : Icons.toggle_off_rounded,
                                   size: 26,
                                 ),
-                                color: isActive ? AppColors.mint : const Color(0xFF9AA9B0),
+                                color: isActive
+                                    ? AppColors.mint
+                                    : const Color(0xFF9AA9B0),
                                 visualDensity: VisualDensity.compact,
                                 onPressed: onToggleActive,
                               ),
@@ -215,7 +228,7 @@ class ServiceCard extends StatelessWidget {
                     // Ligne d'infos rapides : lieu · capacité · responsable
                     // --------------------------------------------------------
                     Wrap(
-                      spacing: 14,  // Espacement horizontal entre chips
+                      spacing: 14, // Espacement horizontal entre chips
                       runSpacing: 4, // Espacement vertical si wrap
                       children: [
                         // Localisation
@@ -256,9 +269,11 @@ class ServiceCard extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(width: 2),
-                            Icon(Icons.arrow_forward_ios_rounded,
-                                size: 11,
-                                color: typeColor.withValues(alpha: 0.85)),
+                            Icon(
+                              Icons.arrow_forward_ios_rounded,
+                              size: 11,
+                              color: typeColor.withValues(alpha: 0.85),
+                            ),
                           ],
                         ),
                       ),

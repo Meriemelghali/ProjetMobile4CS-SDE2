@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/widgets.dart';
+import '../../services/domain/hospital_service.dart';
 import '../domain/staff_user.dart';
 
 class PatientProfileTab extends StatefulWidget {
@@ -10,11 +11,17 @@ class PatientProfileTab extends StatefulWidget {
     required this.user,
     required this.onSave,
     required this.onSignOut,
+    this.isDoctorProfile = false,
+    this.doctorServices = const [],
+    this.onSwitchRole,
   });
 
   final StaffUser user;
   final Future<void> Function(Map<String, Object?> updates) onSave;
   final VoidCallback onSignOut;
+  final bool isDoctorProfile;
+  final List<HospitalService> doctorServices;
+  final VoidCallback? onSwitchRole;
 
   @override
   State<PatientProfileTab> createState() => _PatientProfileTabState();
@@ -90,14 +97,16 @@ class _PatientProfileTabState extends State<PatientProfileTab> {
     setState(() => _isSaving = true);
     try {
       await widget.onSave({
-        'firstName': _firstName.text.trim(),
-        'lastName': _lastName.text.trim(),
+        if (!widget.isDoctorProfile) ...{
+          'firstName': _firstName.text.trim(),
+          'lastName': _lastName.text.trim(),
+          'birthDate': _birthDate == null ? null : _dateOnly(_birthDate!),
+          'address': _address.text.trim(),
+          'emergencyContact': _emergency.text.trim(),
+          'insurance': _insurance.text.trim(),
+        },
         'email': _email.text.trim(),
-        'birthDate': _birthDate == null ? null : _dateOnly(_birthDate!),
         'phone': _phone.text.trim(),
-        'address': _address.text.trim(),
-        'emergencyContact': _emergency.text.trim(),
-        'insurance': _insurance.text.trim(),
         'language': _language,
         'notificationPreferences': {
           'appointments': _appointmentNotifications,
@@ -135,56 +144,72 @@ class _PatientProfileTabState extends State<PatientProfileTab> {
         padding: const EdgeInsets.all(20),
         children: [
           SectionIntro(
-            title: _text('Mon profil', 'ملفي الشخصي'),
+            title: widget.isDoctorProfile
+                ? 'Profil médecin'
+                : _text('Mon profil', 'ملفي الشخصي'),
             subtitle: _text(
-              'Consultez et mettez à jour vos informations personnelles.',
+              widget.isDoctorProfile
+                  ? 'Informations professionnelles et coordonnées.'
+                  : 'Consultez et mettez à jour vos informations personnelles.',
               'عرض وتحديث معلوماتك الشخصية.',
             ),
           ),
           const SizedBox(height: 16),
-          _sectionTitle(
-            _text('Informations personnelles', 'المعلومات الشخصية'),
-          ),
-          Row(
-            children: [
-              Expanded(
-                child: _field(
-                  _firstName,
-                  _text('Prénom', 'الاسم الأول'),
-                  validator: (value) => value == null || value.trim().isEmpty
-                      ? _text('Le prénom est requis.', 'الاسم الأول مطلوب.')
-                      : null,
+          if (widget.isDoctorProfile) ...[
+            _doctorIdentity(),
+            const SizedBox(height: 16),
+          ] else ...[
+            _sectionTitle(
+              _text('Informations personnelles', 'المعلومات الشخصية'),
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: _field(
+                    _firstName,
+                    _text('Prénom', 'الاسم الأول'),
+                    validator: (value) => value == null || value.trim().isEmpty
+                        ? _text('Le prénom est requis.', 'الاسم الأول مطلوب.')
+                        : null,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(child: _field(_lastName, _text('Nom', 'اسم العائلة'))),
-            ],
-          ),
+                const SizedBox(width: 10),
+                Expanded(child: _field(_lastName, _text('Nom', 'اسم العائلة'))),
+              ],
+            ),
+          ],
           _field(
             _email,
             _text('E-mail', 'البريد الإلكتروني'),
             keyboardType: TextInputType.emailAddress,
-            validator: (value) => value == null || !value.contains('@')
-                ? _text('E-mail invalide.', 'البريد الإلكتروني غير صالح.')
-                : null,
+            validator: (value) {
+              final email = value?.trim() ?? '';
+              return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)
+                  ? null
+                  : _text('E-mail invalide.', 'البريد الإلكتروني غير صالح.');
+            },
           ),
-          OutlinedButton.icon(
-            onPressed: _selectBirthDate,
-            icon: const Icon(Icons.cake_outlined),
-            label: Text(
-              _birthDate == null
-                  ? _text('Date de naissance', 'تاريخ الميلاد')
-                  : '${_text('Date de naissance', 'تاريخ الميلاد')} : ${_dateLabel(_birthDate!)}',
+          if (!widget.isDoctorProfile)
+            OutlinedButton.icon(
+              onPressed: _selectBirthDate,
+              icon: const Icon(Icons.cake_outlined),
+              label: Text(
+                _birthDate == null
+                    ? _text('Date de naissance', 'تاريخ الميلاد')
+                    : '${_text('Date de naissance', 'تاريخ الميلاد')} : ${_dateLabel(_birthDate!)}',
+              ),
             ),
-          ),
           _field(
             _phone,
             _text('Téléphone', 'الهاتف'),
             keyboardType: TextInputType.phone,
+            requiredField: !widget.isDoctorProfile,
           ),
-          _field(_address, _text('Adresse', 'العنوان'), maxLines: 2),
-          _field(_emergency, _text('Contact d’urgence', 'جهة اتصال للطوارئ')),
-          _field(_insurance, _text('Assurance / CNAM', 'التأمين / CNAM')),
+          if (!widget.isDoctorProfile) ...[
+            _field(_address, _text('Adresse', 'العنوان'), maxLines: 2),
+            _field(_emergency, _text('Contact d’urgence', 'جهة اتصال للطوارئ')),
+            _field(_insurance, _text('Assurance / CNAM', 'التأمين / CNAM')),
+          ],
           const SizedBox(height: 8),
           _sectionTitle(_text('Préférences', 'التفضيلات')),
           DropdownButtonFormField<String>(
@@ -265,6 +290,18 @@ class _PatientProfileTabState extends State<PatientProfileTab> {
             ),
           ),
           const SizedBox(height: 10),
+          if (widget.user.assignedRoles.length > 1 &&
+              widget.onSwitchRole != null) ...[
+            OutlinedButton.icon(
+              onPressed: widget.onSwitchRole,
+              icon: const Icon(Icons.switch_account_outlined),
+              label: const Text('Changer de rôle'),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(50),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
           OutlinedButton.icon(
             onPressed: widget.onSignOut,
             icon: const Icon(Icons.logout_rounded),
@@ -275,6 +312,57 @@ class _PatientProfileTabState extends State<PatientProfileTab> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _doctorIdentity() {
+    final name = [
+      widget.user.firstName,
+      widget.user.lastName,
+    ].where((part) => part.isNotEmpty).join(' ').trim();
+    final serviceNames = widget.doctorServices.map((service) => service.name);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              radius: 32,
+              backgroundColor: const Color(0xFFE1F2EF),
+              foregroundImage: widget.user.photoUrl.isEmpty
+                  ? null
+                  : NetworkImage(widget.user.photoUrl),
+              child: widget.user.photoUrl.isEmpty
+                  ? const Icon(Icons.person_outline, color: AppColors.blue)
+                  : null,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name.isEmpty ? widget.user.displayName : name,
+                    style: const TextStyle(
+                      color: AppColors.navy,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (widget.user.specialty.isNotEmpty)
+                    Text('Spécialité : ${widget.user.specialty}'),
+                  Text(
+                    serviceNames.isEmpty
+                        ? 'Service(s) : Aucun service attribué'
+                        : 'Service(s) : ${serviceNames.join(', ')}',
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

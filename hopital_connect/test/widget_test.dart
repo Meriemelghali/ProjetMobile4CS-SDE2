@@ -4,6 +4,9 @@ import 'package:hopital_connect/app.dart';
 import 'package:hopital_connect/features/appointments/domain/appointment.dart';
 import 'package:hopital_connect/features/appointments/presentation/patient_home_tab.dart';
 import 'package:hopital_connect/features/dashboard/presentation/doctor_space_tabs.dart';
+import 'package:hopital_connect/features/hospital/domain/hospital_resources.dart';
+import 'package:hopital_connect/features/planning/domain/shift.dart';
+import 'package:hopital_connect/features/transmissions/domain/handover.dart';
 import 'package:hopital_connect/features/users/domain/staff_role.dart';
 import 'package:hopital_connect/features/users/domain/staff_user.dart';
 
@@ -72,6 +75,87 @@ void main() {
     expect(find.text('Transmissions'), findsNothing);
   });
 
+  testWidgets(
+    'doctor home keeps its non-operation sections without a service',
+    (tester) async {
+      final now = DateTime.now();
+      final appointment = Appointment(
+        id: 'appointment-id',
+        patientId: 'patient-id',
+        patientName: 'Test patient',
+        doctorId: 'doctor-id',
+        doctorName: 'Dr Test',
+        serviceName: 'Pédiatrie',
+        serviceLocation: 'Bâtiment A',
+        servicePhone: '',
+        serviceEmail: '',
+        startAt: now.add(const Duration(minutes: 30)),
+        reason: 'Consultation',
+        status: AppointmentStatus.accepted,
+      );
+      final shift = Shift(
+        id: 'shift-id',
+        userId: 'doctor-id',
+        serviceId: 'service-id',
+        start: now.add(const Duration(days: 1)),
+        end: now.add(const Duration(days: 1, hours: 8)),
+        role: 'doctor',
+      );
+      final handover = Handover(
+        id: 'handover-id',
+        serviceId: 'service-id',
+        authorId: 'author-id',
+        title: 'Transmission récente',
+        message: 'À lire',
+        createdAt: now,
+        author: 'Dr Auteur',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DoctorHomeTab(
+              user: const StaffUser(
+                id: 'doctor-id',
+                displayName: 'Dr Test',
+                email: 'doctor@example.test',
+                role: StaffRole.doctor,
+              ),
+              services: const [],
+              appointments: [appointment],
+              interventions: const [],
+              shifts: [shift],
+              handovers: [handover],
+              onOpenPlanning: _noop,
+              onHandoverTap: _noopHandover,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Aucun service attribué'), findsOneWidget);
+      expect(find.text('RDV aujourd’hui'), findsOneWidget);
+      expect(find.textContaining('Test patient'), findsOneWidget);
+      expect(find.text('Prochaine garde'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.textContaining('Garde à venir'),
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.textContaining('Garde à venir'), findsOneWidget);
+      expect(find.textContaining('transmission non lue'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('À retenir'),
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('À retenir'), findsOneWidget);
+      expect(find.text('Transmission récente'), findsOneWidget);
+      expect(find.text('Opérations aujourd’hui'), findsNothing);
+      expect(find.textContaining('Opération prévue demain'), findsNothing);
+    },
+  );
+
   testWidgets('doctor planning displays appointments without edit actions', (
     tester,
   ) async {
@@ -89,19 +173,37 @@ void main() {
       reason: 'Consultation',
       status: AppointmentStatus.accepted,
     );
+    final operation = HospitalIntervention(
+      id: 'intervention-id',
+      surgeonId: 'doctor-id',
+      patientId: 'patient-id',
+      operatingRoomId: 'or-id',
+      title: 'Opération non autorisée',
+      start: DateTime.now().add(const Duration(minutes: 45)),
+      end: DateTime.now().add(const Duration(hours: 1)),
+      equipmentIds: const [],
+      serviceId: 'surgery-id',
+    );
 
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: DoctorPlanningTab(
             appointments: [appointment],
+            interventions: [operation],
             shifts: const [],
+            hasService: false,
+            hasOperations: false,
+            operationServiceIds: const {},
           ),
         ),
       ),
     );
 
     expect(find.textContaining('Test patient'), findsOneWidget);
+    expect(find.text('1 RDV'), findsOneWidget);
+    expect(find.text('Opérations'), findsNothing);
+    expect(find.textContaining('Opération non autorisée'), findsNothing);
     expect(find.textContaining('lecture seule'), findsOneWidget);
     await tester.tap(find.textContaining('Test patient'));
     await tester.pumpAndSettle();
@@ -114,3 +216,4 @@ void _noop() {}
 void _noopFollowUps(Object _) {}
 void _noopAppointment(Object _) {}
 void _noopNullableAppointment(Object? _) {}
+void _noopHandover(Handover _) {}

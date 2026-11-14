@@ -17,7 +17,18 @@ const userSchema = new mongoose.Schema({
     results: { type: Boolean, default: true },
     reminders: { type: Boolean, default: true },
   },
-  role: { type: String, required: true, enum: ['admin', 'doctor', 'nurse', 'secretary', 'patient'] },
+  role: {
+    type: String,
+    required: true,
+    enum: ['admin', 'doctor', 'nurse', 'secretary', 'service_head', 'patient'],
+  },
+  roles: {
+    type: [{
+      type: String,
+      enum: ['admin', 'doctor', 'nurse', 'secretary', 'service_head', 'patient'],
+    }],
+    default: undefined,
+  },
   serviceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Service', default: null },
   serviceIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Service' }],
   specialty: { type: String, trim: true, maxlength: 120, default: '' },

@@ -1,6 +1,6 @@
 # HôpitalConnect API
 
-Minimal Express 5 and MongoDB API for staff accounts, services, shifts, and operational handovers. Do not enter real patient data or identifiable medical information.
+Minimal Express 5 and MongoDB API for staff accounts, services, shifts, operational handovers, and hospital resources. Do not enter real patient data or identifiable medical information.
 
 ## Requirements and setup
 
@@ -17,6 +17,11 @@ Create `.env` from `.env.example` (`Copy-Item .env.example .env` in
 PowerShell), then set `MONGODB_URI`, `JWT_SECRET` (a randomly generated value
 of at least 32 characters), and optionally `PORT` / `JWT_EXPIRES_IN`. Never
 use the example JWT placeholder in a deployed environment.
+
+After configuring the database, run `npm run migrate:service-features` once.
+It backfills missing/null service feature flags to `false` and sets
+`a_operations: false` for services whose name contains “Pédiatrie”. The command
+prints the matching database records for verification.
 
 ### MongoDB Atlas (hosted MongoDB)
 
@@ -108,58 +113,45 @@ Passwords must be at least 10 characters and at most 72 UTF-8 bytes. The bootstr
 
 ## Authentication and response format
 
-Login with `POST /auth/login` and then send `Authorization: Bearer <token>` on every other endpoint, including `GET /auth/me`. User responses contain profile fields, role and service assignment IDs, doctor specialty/photo URL, and active state; password hashes and bootstrap keys are never serialized.
+Login with `POST /auth/login` and then send `Authorization: Bearer <token>` on every other endpoint, including `GET /auth/me`. User responses include profile fields, assigned roles, service assignments, doctor specialty/photo URL, and active state; password hashes and bootstrap keys are never serialized.
 
-Successful responses use the resource keys shown below (login is `{ "token": "...", "user": {...} }`, and `/auth/me` is `{ "user": {...} }`). Errors use `{ "error": { "message": "..." } }`.
+Successful responses use the resource keys shown below (login is `{ "token": "...", "user": {...} }` for a single role and `{ "selectionToken", "user" }` for multiple roles; `/auth/me` is `{ "user": {...} }`). Errors use `{ "error": { "message": "..." } }`.
 
-Roles are `admin`, `doctor`, `nurse`, `secretary`, and `patient`. Public
-registration always creates a patient account; the requested role is never
-accepted from the client. An administrator assigns secretaries to one or more
-services and assigns doctors to a service. Doctors may have a specialty and a
-photo URL for the patient booking flow. Only admins may list or manage all user
-accounts. Patients may read active services and only their own appointments.
-Secretaries may read appointments and doctors only for their assigned services.
-Admins, doctors, and nurses may read staff services, shifts, or handovers;
-doctors and nurses are restricted to their assigned service. Only admins may
-create/update services and shifts. Admins, doctors, and nurses may create
-handovers for their service. Handover authors are derived from the
-authenticated account, never accepted from request data. Each user has a
-separate read state for handovers.
+Roles are `admin`, `doctor`, `nurse`, `secretary`, `service_head`, and `patient`. An account may have more than one role. When several roles are assigned, `POST /auth/login` returns a short-lived `selectionToken`; send it and one assigned role to `POST /auth/select-role` to receive an access token for that role. Permissions use only the role selected for the current token. Public registration always creates a patient account and does not accept a requested role. Only admins may list or manage all user accounts. Administrators assign secretaries to one or more services and doctors to a service; doctors may also have a specialty and photo URL.
 
-Appointment availability is derived from the selected doctor's shifts.
-Appointments occupy 30-minute slots, rounded up to the next half-hour in UTC.
-A request must match an available slot and starts as `pending`. Secretaries
-must claim a pending request before deciding it; the claim expires after
-15 minutes and is acquired atomically. They can accept, reject with a reason,
-or propose another available slot. Patients may accept or refuse a proposed
-slot. Pending requests older than 24 hours are marked `isOverdue` in responses
-so the secretary workspace can alert on them. Appointment status changes are
-stored as in-app notifications for the patient; this API does not send push or
-email notifications.
+An authenticated multi-role account can request a token for another assigned
+role with `POST /auth/switch-role`; the API rejects roles not present in the
+account's `roles` list. Every request revalidates the token role against that
+list. Doctors may be assigned to multiple services through `serviceIds`.
+Service capabilities are `a_rdv`, `a_operations`, and `a_gardes`; all default
+to `false`, and null values are serialized as `false`.
+
+Patients may read active services and only their own appointments. Secretaries may read and manage appointments only for assigned services. Doctors see only their own appointments. Doctors and nurses may read staff services, shifts, and handovers for their assigned service; service heads may access resources for services assigned to them. Secretaries have read-only access to hospital resources and handovers for their assigned services. Only admins may create or update services, shifts, and hospital resources. Handover authors are derived from the authenticated account, never accepted from request data. Handover read state is tracked per user.
+
+Appointment availability is derived from the selected doctor's shifts. Appointments occupy 30-minute slots, rounded up to the next half-hour in UTC. A request must match an available slot and starts as `pending`. Secretaries must claim a pending request before deciding it; the claim expires after 15 minutes and is acquired atomically. They can accept, reject with a reason, or propose another available slot. Patients may accept or refuse a proposed slot. Pending requests older than 24 hours are marked `isOverdue` in responses. Status changes are stored as in-app notifications; this API does not send push or email notifications.
 
 ## Endpoint contract
 
-All JSON request bodies reject unrecognized fields. MongoDB identifiers are ObjectId hex strings. Collections are bounded (200 users/services/doctors; 500 shifts/handovers/appointments).
+All JSON request bodies reject unrecognized fields. MongoDB identifiers are ObjectId hex strings. Collections are bounded (200 users, services, hospitals, rooms, operating rooms, and doctors; 500 shifts, handovers, beds, interventions, equipment, and appointments).
 
 | Method and path | Access | Request / query | Success response |
 |---|---|---|---|
-| `POST /auth/login` | Public | `{ "email", "password" }` | `{ "token", "user" }` |
+| `POST /auth/login` | Public | `{ "email", "password" }` | `{ "token", "user" }` for one role; `{ "selectionToken", "user" }` for multiple roles |
+| `POST /auth/select-role` | Public, short-lived selection token | `{ "selectionToken", "role" }` | `{ "token", "user" }` |
+| `POST /auth/switch-role` | Authenticated; role must be assigned | `{ "role" }` | `{ "token", "user" }` |
 | `POST /auth/register` | Public | `{ "username", "email", "password" }` | `{ "token", "user" }` (201; role always `patient`) |
 | `GET /auth/me` | Authenticated | — | `{ "user" }` |
 | `PUT /auth/me` | Authenticated | Profile fields: `firstName`, `lastName`, `email`, `birthDate`, `phone`, `address`, `emergencyContact`, `insurance`, `language`, `notificationPreferences`; password change requires `currentPassword` and `newPassword` | `{ "user" }` |
 | `GET /users` | Admin | — | `{ "users": [...] }` |
 | `GET /users/service/:serviceId` | Admin, doctor, nurse | — (non-admins: own service only) | `{ "users": [...] }` (active colleagues; no email/profile data) |
-| `POST /users` | Admin | `{ "username", "email", "password", "role", "serviceId"?, "serviceIds"?, "specialty"?, "photoUrl"?, "active"? }` | `{ "user" }` (201) |
+| `POST /users` | Admin | `{ "username", "email", "password", "role"?, "roles"?, "serviceId"?, "serviceIds"?, "specialty"?, "photoUrl"?, "active"? }` | `{ "user" }` (201) |
 | `PUT /users/:id` | Admin | Any subset of user fields above; `password` changes credentials | `{ "user" }` |
-| `GET /services` | Admin, doctor, nurse, secretary, patient | Patients receive active services; secretaries receive assigned services | `{ "services": [...] }` |
-| `POST /services` | Admin | `{ "name", "location"?, "description"?, "active"? }` | `{ "service" }` (201) |
+| `GET /services` | Admin, doctor, nurse, secretary, service head, patient | Patients receive active services; secretaries receive assigned services | `{ "services": [...] }` |
+| `POST /services` | Admin | `{ "name", "location"?, "description"?, "active"?, "a_rdv"?, "a_operations"?, "a_gardes"? }` | `{ "service" }` (201) |
 | `PUT /services/:id` | Admin | Any subset of service fields | `{ "service" }` |
-| `GET /shifts` | Admin, doctor, nurse | Optional `userId` and/or `date=YYYY-MM-DD` (UTC day, by shift start) | `{ "shifts": [...] }` |
+| `GET /shifts` | Admin, doctor, nurse, secretary, service head | Optional `userId` and/or `date=YYYY-MM-DD` (UTC day, by shift start); secretary/service head limited to own shifts | `{ "shifts": [...] }` |
 | `POST /shifts` | Admin | `{ "userId", "serviceId", "start", "end", "role" }` (ISO dates) | `{ "shift" }` (201) |
 | `PUT /shifts/:id` | Admin | Any subset of shift fields | `{ "shift" }` |
-| `GET /handovers` | Admin, doctor, nurse | Optional `serviceId` (doctors/nurses: own service only) | `{ "handovers": [...] }` (includes caller-specific `isRead`) |
-| `POST /handovers` | Admin, doctor, nurse | `{ "serviceId", "title", "content", "important"? }` (doctors/nurses: own service only) | `{ "handover" }` (201) |
-| `POST /handovers/:id/read` | Admin, doctor, nurse | — (doctors/nurses: own service only) | `{ "handover" }` |
 | `GET /appointments/doctors` | Patient, secretary, admin | Optional `serviceId` | `{ "doctors": [{ "_id", "username", "specialty", "photoUrl", "serviceId" }] }` |
 | `GET /appointments/availability` | Patient, secretary, admin | `doctorId` and `date=YYYY-MM-DD` (UTC) | `{ "durationMinutes": 30, "slots": [...] }` |
 | `GET /appointments` | Patient (own only), secretary (assigned services only), doctor (own only), admin | — | `{ "appointments": [...] }` |
@@ -173,13 +165,99 @@ All JSON request bodies reject unrecognized fields. MongoDB identifiers are Obje
 | `PUT /notifications/:id/read` | Authenticated recipient | — | `{ "notification" }` |
 | `PUT /notifications/read-all` | Authenticated | — | `{ "updated": true }` |
 
+| `GET /handovers` | Admin, doctor, nurse, secretary, service head | Optional `serviceId`; non-admins limited to assigned service(s) | `{ "handovers": [...] }` |
+| `POST /handovers` | Admin, doctor, nurse, service head | `{ "serviceId", "title", "content", "important"? }` (non-admins: assigned service only) | `{ "handover" }` (201) |
+| `POST /handovers/:id/read` | Admin, doctor, nurse, secretary, service head | — (non-admins: assigned service only) | `{ "handover" }` |
+| `GET /hospitals` | Admin, doctor, nurse, secretary, service head | — | `{ "hospitals": [...] }` |
+| `POST /hospitals` | Admin | `{ "name", "address"?, "phone"?, "active"?, "serviceIds"? }` | `{ "hospital" }` (201) |
+| `PUT /hospitals/:id` | Admin | Any subset of hospital fields | `{ "hospital" }` |
+| `DELETE /hospitals/:id` | Admin | — (hospital must have no rooms, operating rooms, or equipment) | `{ "hospital" }` |
+| `GET /rooms` | Admin, doctor, nurse, secretary, service head | Optional `hospitalId` | `{ "rooms": [...] }` (includes occupied/available bed counts) |
+| `POST /rooms` | Admin | `{ "hospitalId", "serviceId", "number", "floor"?, "type"?, "capacity"?, "status"? }` | `{ "room" }` (201) |
+| `PUT /rooms/:id` | Admin | Any subset of room fields | `{ "room" }` |
+| `DELETE /rooms/:id` | Admin | — (room must have no beds) | `{ "room" }` |
+| `GET /rooms/:id/occupancy` | Admin, doctor, nurse, secretary, service head | — | `{ "occupancy": { "roomId", "capacity", "occupiedBeds", "availableBeds" } }` |
+| `GET /beds` | Admin, doctor, nurse, secretary, service head | Optional `roomId` and/or `status` | `{ "beds": [...] }` |
+| `POST /beds` | Admin | `{ "roomId", "number", "status"? }` (`free`, `reserved`, `cleaning`) | `{ "bed" }` (201) |
+| `PUT /beds/:id` | Admin | Any subset of `roomId`, `number`, `status` (cannot assign `occupied`) | `{ "bed" }` |
+| `DELETE /beds/:id` | Admin | — (bed must be unassigned) | `{ "bed" }` |
+| `PUT /beds/:id/assignment` | Admin | `{ "patientId" }` (active User account with role `patient`) | `{ "bed" }` |
+| `DELETE /beds/:id/assignment` | Admin | — (release; clears patient and sets status `free`) | `{ "bed" }` |
+| `GET /operating-rooms` | Admin, doctor, nurse, secretary, service head | Optional `hospitalId` | `{ "operatingRooms": [...] }` |
+| `POST /operating-rooms` | Admin | `{ "hospitalId", "name", "number"?, "serviceId"?, "status"? }` (`free` or `sterilization`) | `{ "operatingRoom" }` (201) |
+| `PUT /operating-rooms/:id` | Admin | Any subset of operating-room fields | `{ "operatingRoom" }` |
+| `DELETE /operating-rooms/:id` | Admin | — (room must have no interventions) | `{ "operatingRoom" }` |
+| `GET /interventions` | Admin, doctor, nurse, secretary, service head | Optional `surgeonId`, `patientId`, `operatingRoomId`, and/or `status` | `{ "interventions": [...] }` |
+| `POST /interventions` | Admin | `{ "surgeonId", "patientId", "operatingRoomId", "title", "start", "end", "equipmentIds"?, "status"? }` (ISO dates) | `{ "intervention" }` (201) |
+| `PUT /interventions/:id` | Admin | Any subset of `surgeonId`, `patientId`, `equipmentIds`, `title`, `start`, `end`, `status` | `{ "intervention" }` |
+| `DELETE /interventions/:id` | Admin | — | `{ "intervention" }` |
+| `GET /equipment` | Admin, doctor, nurse, secretary, service head | Optional `hospitalId` and/or `status` | `{ "equipment": [...] }` |
+| `POST /equipment` | Admin | `{ "hospitalId", "name", "type", "serialNumber", "serviceId" XOR "operatingRoomId", "status"?, "lastMaintenanceAt"?, "maintenanceDueAt"? }` | `{ "equipment" }` (201) |
+| `PUT /equipment/:id` | Admin | Any subset of equipment fields | `{ "equipment" }` |
+| `PUT /equipment/:id/maintenance` | Admin | Any subset of `status`, `lastMaintenanceAt`, `maintenanceDueAt` (`null` clears a date) | `{ "equipment" }` |
+| `DELETE /equipment/:id` | Admin | — | `{ "equipment" }` |
+
 Service JSON fields include `name`, `location`, `description`, `active`,
 `serviceType`, `building`, `floor`, `capacity`, `phone`, `email`, `headName`,
-`openingHours`, and `notes`.
+`headUserId`, `openingHours`, and `notes`. Supported service categories are
+`medical`, `surgical`,
+`emergency`, `intensive_care`, `maternity`, `medico_technical`,
+`administrative`, and `other`.
 Shift JSON includes `userId`, `serviceId`, ISO-serialized `start`/`end`, `role`,
 `userName`, and `serviceName`. Handover JSON includes `serviceId`,
 server-assigned `authorId`/`authorName`/`createdAt`, `title`, `content`, and
 `important`. User and service IDs in Flutter are MongoDB ObjectId hex strings.
+
+Hospital `serviceIds` must reference existing services. A room's required
+`serviceId` and an operating room's optional `serviceId` must be linked to its
+hospital. Equipment must be assigned to exactly one service or operating room.
+Room occupancy counts assigned beds, and an
+active patient account can occupy at most one bed. Bed responses include only
+the account ID, never account or medical details. Use synthetic patient
+accounts/identifiers for testing. Intervention `surgeonId` must refer to an
+active `User` with role `doctor`; `patientId` must refer to an active `User`
+with role `patient`. Interventions store and return only these account IDs,
+never user names, clinical details, or other patient data. Existing
+intervention records created before these fields were added may be missing the
+links; update them with valid IDs before relying on those records. Overlapping
+active interventions in the same operating room are rejected (adjacent time
+ranges are allowed); cancelled/completed entries do not reserve a slot.
+Interventions may include `equipmentIds`; each item must be functional,
+assigned to that operating room or its service, and free from overlapping
+active interventions for that time range. Equipment status is `functional`,
+`broken`, or `maintenance`; intervention status is `scheduled`,
+`in_progress`, `completed`, or `cancelled`.
+Room `type` is `single`, `double`, or `intensive_care`; `floor` defaults to
+`"0"`, type to `single`, and capacity to 1 (2 for `double`) when omitted.
+Room status is `available`, `full`, or `maintenance`; occupancy updates room
+status unless it is in maintenance. Bed status is `free`, `occupied`,
+`reserved`, or `cleaning`; only assignment can set `occupied`, and release
+clears `patientId` and sets `free`. Operating-room status is `free`,
+`in_progress`, or `sterilization`; intervention progress manages
+`in_progress`, and sterilization blocks scheduling. Equipment with active
+intervention reservations cannot be changed to a non-functional status.
+The maintenance endpoint does not implicitly change equipment status: pass
+`"status": "functional"` explicitly to mark it functional. `lastMaintenanceAt`
+and `maintenanceDueAt` may be sent together or separately; send `null` for
+either date to clear it.
+
+Resource response fields:
+
+- Hospital: `_id`, `name`, `address`, `phone`, `active`, `serviceIds`.
+- Room: `_id`, `hospitalId`, `serviceId`, `number`, `floor`, `type`, `status`,
+  `capacity`,
+  `occupancy` (`roomId`, `capacity`, `occupiedBeds`, `availableBeds`).
+- Bed: `_id`, `roomId`, `number`, `status`, `patientId`, `assignedAt`.
+- Operating room: `_id`, `hospitalId`, `serviceId`, `name`, `number`, `status`,
+  `scheduledCount`.
+- Intervention: `_id`, `surgeonId`, `patientId`, `operatingRoomId`,
+  `operatingRoomName`, `equipmentIds`, `title`, `start`, `end`, `status`.
+- Equipment: `_id`, `hospitalId`, `serviceId`, `operatingRoomId`, `name`,
+  `type`, `serialNumber`, `status`, `lastMaintenanceAt`, `maintenanceDueAt`.
+
+Dates in JSON responses are ISO-serialized. List and create/update/delete
+responses use the wrapper keys shown in the endpoint table; assignment and
+discharge both return `{ "bed": ... }`.
 
 ## Testing
 
@@ -194,8 +272,10 @@ the source for current status; no SMS, email, or push provider is configured.
 
 Run `npm test`. The focused Node test suite covers validation, password-free
 user serialization, JWT signing, health, and unauthenticated access; it does
-not require MongoDB. Full persistence/login/authorization integration testing
-requires a MongoDB instance.
+not require MongoDB. The resource tests also cover hospital serializers,
+schema invariants, and schedule-conflict checks. Full persistence,
+login/authorization, and schedule-reservation integration testing requires a
+MongoDB instance.
 
 ## Postman
 

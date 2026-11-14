@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const { getConfig } = require('../config');
 const { verifyToken } = require('../services/auth');
+const { getUserRoles } = require('../utils/validation');
 
 async function authenticate(req, _res, next) {
   const header = req.get('authorization') || '';
@@ -20,6 +21,10 @@ async function authenticate(req, _res, next) {
   if (!user || !user.active) {
     return next({ status: 401, message: 'Authentication is no longer valid.' });
   }
+  if (!getUserRoles(user).includes(payload.role)) {
+    return next({ status: 401, message: 'This role is no longer assigned to the account.' });
+  }
+  user.role = payload.role;
   req.user = user;
   return next();
 }

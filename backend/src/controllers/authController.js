@@ -6,10 +6,18 @@ const {
   requirePassword,
   requireDateOnly,
   requireBoolean,
+  requireRoles,
   requireString,
   rejectUnknownFields,
+  getUserRoles,
 } = require('../utils/validation');
-const { createToken, hashPassword, verifyPassword } = require('../services/auth');
+const {
+  createToken,
+  createRoleSelectionToken,
+  hashPassword,
+  verifyPassword,
+  verifyToken,
+} = require('../services/auth');
 const { getConfig } = require('../config');
 
 function userResponse(user) {
@@ -31,6 +39,7 @@ function userResponse(user) {
       reminders: true,
     },
     role: user.role,
+    roles: getUserRoles(user),
     serviceId: user.serviceId,
     serviceIds: user.serviceIds?.length
       ? user.serviceIds
@@ -57,7 +66,59 @@ async function login(req, res) {
   }
 
   const config = getConfig();
-  return res.json({ token: createToken(user, config), user: userResponse(user) });
+  const roles = getUserRoles(user);
+  if (roles.length > 1) {
+    return res.json({
+      selectionToken: createRoleSelectionToken(user, config),
+      user: userResponse(user),
+    });
+  }
+  const role = roles[0] || user.role;
+  return res.json({ token: createToken(user, config, role), user: userResponse(user) });
+}
+
+async function selectRole(req, res) {
+  const body = requireObject(req.body);
+  rejectUnknownFields(body, ['selectionToken', 'role']);
+  if (typeof body.selectionToken !== 'string' || !body.selectionToken) {
+    throw new HttpError(400, 'selectionToken is required.');
+  }
+  const role = requireRoles([body.role])[0];
+  const config = getConfig();
+  let payload;
+  try {
+    payload = verifyToken(body.selectionToken, config);
+  } catch {
+    throw new HttpError(401, 'Role selection has expired. Please sign in again.');
+  }
+  if (payload.purpose !== 'role_selection' || !payload.sub) {
+    throw new HttpError(401, 'Invalid role selection token.');
+  }
+  const user = await User.findById(payload.sub);
+  if (!user || !user.active) {
+    throw new HttpError(401, 'Authentication is no longer valid.');
+  }
+  if (!getUserRoles(user).includes(role)) {
+    throw new HttpError(403, 'This role is not assigned to your account.');
+  }
+  return res.json({
+    token: createToken(user, config, role),
+    user: { ...userResponse(user), role },
+  });
+}
+
+function switchRole(req, res) {
+  const body = requireObject(req.body);
+  rejectUnknownFields(body, ['role']);
+  const role = requireRoles([body.role])[0];
+  if (!getUserRoles(req.user).includes(role)) {
+    throw new HttpError(403, 'This role is not assigned to your account.');
+  }
+  const config = getConfig();
+  return res.json({
+    token: createToken(req.user, config, role),
+    user: { ...userResponse(req.user), role },
+  });
 }
 
 async function register(req, res) {
@@ -69,6 +130,7 @@ async function register(req, res) {
     email: requireEmail(body.email),
     passwordHash: await hashPassword(requirePassword(body.password)),
     role: 'patient',
+    roles: ['patient'],
     active: true,
   });
 
@@ -164,4 +226,12 @@ async function updateMe(req, res) {
   return res.json({ user: userResponse(user) });
 }
 
-module.exports = { login, register, me, updateMe, userResponse };
+module.exports = {
+  login,
+  selectRole,
+  switchRole,
+  register,
+  me,
+  updateMe,
+  userResponse,
+};

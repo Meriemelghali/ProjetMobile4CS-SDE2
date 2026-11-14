@@ -9,16 +9,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // Pour FilteringTextInputFormatter (champ numérique)
 
 import '../../../core/theme/app_colors.dart';
+import '../../users/domain/staff_role.dart';
+import '../../users/domain/staff_user.dart';
 import '../domain/hospital_service.dart';
 
 /// Dialog modal permettant de créer ou modifier un service hospitalier.
 /// En mode création : tous les champs sont vides sauf les défauts.
 /// En mode édition  : les champs sont pré-remplis depuis [service].
 class ServiceFormDialog extends StatefulWidget {
-  const ServiceFormDialog({super.key, this.service});
+  const ServiceFormDialog({super.key, this.service, this.users = const []});
 
   /// Service existant à modifier. Null = mode création.
   final HospitalService? service;
+  final List<StaffUser> users;
 
   @override
   State<ServiceFormDialog> createState() => _ServiceFormDialogState();
@@ -26,7 +29,6 @@ class ServiceFormDialog extends StatefulWidget {
 
 class _ServiceFormDialogState extends State<ServiceFormDialog>
     with SingleTickerProviderStateMixin {
-
   // Clé du formulaire pour la validation globale
   final _formKey = GlobalKey<FormState>();
 
@@ -34,25 +36,47 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
   late final TabController _tabCtrl = TabController(length: 4, vsync: this);
 
   // ---- Contrôleurs des champs texte ----
-  late final _nameCtrl         = TextEditingController(text: widget.service?.name         ?? '');
-  late final _descriptionCtrl  = TextEditingController(text: widget.service?.description  ?? '');
-  late final _locationCtrl     = TextEditingController(text: widget.service?.location     ?? '');
-  late final _buildingCtrl     = TextEditingController(text: widget.service?.building     ?? '');
-  late final _floorCtrl        = TextEditingController(text: widget.service?.floor        ?? '');
-  late final _phoneCtrl        = TextEditingController(text: widget.service?.phone        ?? '');
-  late final _emailCtrl        = TextEditingController(text: widget.service?.email        ?? '');
-  late final _headNameCtrl     = TextEditingController(text: widget.service?.headName     ?? '');
-  late final _openingHoursCtrl = TextEditingController(text: widget.service?.openingHours ?? '');
-  late final _notesCtrl        = TextEditingController(text: widget.service?.notes        ?? '');
-  late final _capacityCtrl     = TextEditingController(
+  late final _nameCtrl = TextEditingController(
+    text: widget.service?.name ?? '',
+  );
+  late final _descriptionCtrl = TextEditingController(
+    text: widget.service?.description ?? '',
+  );
+  late final _locationCtrl = TextEditingController(
+    text: widget.service?.location ?? '',
+  );
+  late final _buildingCtrl = TextEditingController(
+    text: widget.service?.building ?? '',
+  );
+  late final _floorCtrl = TextEditingController(
+    text: widget.service?.floor ?? '',
+  );
+  late final _phoneCtrl = TextEditingController(
+    text: widget.service?.phone ?? '',
+  );
+  late final _emailCtrl = TextEditingController(
+    text: widget.service?.email ?? '',
+  );
+  late String? _headUserId = widget.service?.headUserId;
+  late final _openingHoursCtrl = TextEditingController(
+    text: widget.service?.openingHours ?? '',
+  );
+  late final _notesCtrl = TextEditingController(
+    text: widget.service?.notes ?? '',
+  );
+  late final _capacityCtrl = TextEditingController(
     text: (widget.service?.capacity ?? 0) > 0
         ? '${widget.service!.capacity}'
         : '', // Affiche vide si capacité = 0 (non renseignée)
   );
 
   // ---- État des champs non-texte ----
-  late ServiceType _serviceType = widget.service?.serviceType ?? ServiceType.autre;
-  late bool _isActive           = widget.service?.isActive    ?? true;
+  late ServiceType _serviceType =
+      widget.service?.serviceType ?? ServiceType.other;
+  late bool _isActive = widget.service?.isActive ?? true;
+  late bool _hasAppointments = widget.service?.hasAppointments ?? false;
+  late bool _hasOperations = widget.service?.hasOperations ?? false;
+  late bool _hasOnCall = widget.service?.hasOnCall ?? false;
 
   // True si on modifie un service existant
   bool get _isEditing => widget.service != null;
@@ -67,7 +91,6 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
     _floorCtrl.dispose();
     _phoneCtrl.dispose();
     _emailCtrl.dispose();
-    _headNameCtrl.dispose();
     _openingHoursCtrl.dispose();
     _notesCtrl.dispose();
     _capacityCtrl.dispose();
@@ -88,24 +111,40 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
 
     final capacityText = _capacityCtrl.text.trim();
 
+    StaffUser? selectedHead;
+    for (final user in widget.users) {
+      if (user.id == _headUserId &&
+          user.role == StaffRole.serviceHead &&
+          user.isActive) {
+        selectedHead = user;
+        break;
+      }
+    }
+
     // Construit le service avec les valeurs saisies
     final result = HospitalService(
-      id:           widget.service?.id ?? '',
-      name:         _nameCtrl.text.trim(),
-      description:  _descriptionCtrl.text.trim(),
-      location:     _locationCtrl.text.trim().isNotEmpty
-                      ? _locationCtrl.text.trim()
-                      : '${_buildingCtrl.text.trim()} – ${_floorCtrl.text.trim()}'.trim().replaceAll(RegExp(r'^[\s–]+|[\s–]+$'), ''),
-      isActive:     _isActive,
-      serviceType:  _serviceType,
-      building:     _buildingCtrl.text.trim(),
-      floor:        _floorCtrl.text.trim(),
-      capacity:     capacityText.isEmpty ? 0 : int.tryParse(capacityText) ?? 0,
-      phone:        _phoneCtrl.text.trim(),
-      email:        _emailCtrl.text.trim(),
-      headName:     _headNameCtrl.text.trim(),
+      id: widget.service?.id ?? '',
+      name: _nameCtrl.text.trim(),
+      description: _descriptionCtrl.text.trim(),
+      location: _locationCtrl.text.trim().isNotEmpty
+          ? _locationCtrl.text.trim()
+          : '${_buildingCtrl.text.trim()} – ${_floorCtrl.text.trim()}'
+                .trim()
+                .replaceAll(RegExp(r'^[\s–]+|[\s–]+$'), ''),
+      isActive: _isActive,
+      hasAppointments: _hasAppointments,
+      hasOperations: _hasOperations,
+      hasOnCall: _hasOnCall,
+      serviceType: _serviceType,
+      building: _buildingCtrl.text.trim(),
+      floor: _floorCtrl.text.trim(),
+      capacity: capacityText.isEmpty ? 0 : int.tryParse(capacityText) ?? 0,
+      phone: _phoneCtrl.text.trim(),
+      email: _emailCtrl.text.trim(),
+      headName: selectedHead?.displayName ?? '',
+      headUserId: selectedHead?.id,
       openingHours: _openingHoursCtrl.text.trim(),
-      notes:        _notesCtrl.text.trim(),
+      notes: _notesCtrl.text.trim(),
     );
 
     Navigator.of(context).pop(result); // Retourne le service au code appelant
@@ -121,8 +160,8 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
       child: SizedBox(
-        width: 520,       // Largeur max sur écrans larges
-        height: 580,      // Hauteur fixe pour éviter les débordements
+        width: 520, // Largeur max sur écrans larges
+        height: 580, // Hauteur fixe pour éviter les débordements
         child: Column(
           children: [
             // ----------------------------------------------------------------
@@ -144,10 +183,10 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
                 child: TabBarView(
                   controller: _tabCtrl,
                   children: [
-                    _buildTabGeneral(),     // Onglet 1 : infos générales
-                    _buildTabLocalisation(),// Onglet 2 : localisation
-                    _buildTabContact(),     // Onglet 3 : contact
-                    _buildTabPratique(),    // Onglet 4 : infos pratiques
+                    _buildTabGeneral(), // Onglet 1 : infos générales
+                    _buildTabLocalisation(), // Onglet 2 : localisation
+                    _buildTabContact(), // Onglet 3 : contact
+                    _buildTabPratique(), // Onglet 4 : infos pratiques
                   ],
                 ),
               ),
@@ -174,20 +213,26 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
         children: [
           // Icône médicale dans un container coloré
           Container(
-            width: 40, height: 40,
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(
               color: const Color(0xFFE1F2EF),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.medical_services_outlined,
-                color: AppColors.blue, size: 22),
+            child: const Icon(
+              Icons.medical_services_outlined,
+              color: AppColors.blue,
+              size: 22,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
               _isEditing ? 'Modifier le service' : 'Ajouter un service',
               style: const TextStyle(
-                color: AppColors.navy, fontSize: 18, fontWeight: FontWeight.w700,
+                color: AppColors.navy,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ),
@@ -218,10 +263,10 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
         indicatorWeight: 2.5,
         labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
         tabs: const [
-          Tab(icon: Icon(Icons.info_outline, size: 18),    text: 'Général'),
-          Tab(icon: Icon(Icons.place_outlined, size: 18),  text: 'Lieu'),
-          Tab(icon: Icon(Icons.call_outlined, size: 18),   text: 'Contact'),
-          Tab(icon: Icon(Icons.tune_rounded, size: 18),    text: 'Pratique'),
+          Tab(icon: Icon(Icons.info_outline, size: 18), text: 'Général'),
+          Tab(icon: Icon(Icons.place_outlined, size: 18), text: 'Lieu'),
+          Tab(icon: Icon(Icons.call_outlined, size: 18), text: 'Contact'),
+          Tab(icon: Icon(Icons.tune_rounded, size: 18), text: 'Pratique'),
         ],
       ),
     );
@@ -246,7 +291,9 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
               counterText: '',
             ),
             validator: (v) {
-              if (v == null || v.trim().isEmpty) return 'Le nom est obligatoire.';
+              if (v == null || v.trim().isEmpty) {
+                return 'Le nom est obligatoire.';
+              }
               if (v.trim().length > 120) return 'Maximum 120 caractères.';
               return null;
             },
@@ -263,14 +310,16 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
             items: ServiceType.values
                 .map((t) => DropdownMenuItem(value: t, child: Text(t.label)))
                 .toList(),
-            onChanged: (v) => setState(() => _serviceType = v ?? ServiceType.autre),
+            onChanged: (v) =>
+                setState(() => _serviceType = v ?? ServiceType.other),
           ),
           const SizedBox(height: 14),
 
           // Champ : Description (multilignes)
           TextFormField(
             controller: _descriptionCtrl,
-            minLines: 3, maxLines: 5,
+            minLines: 3,
+            maxLines: 5,
             maxLength: 1000,
             textCapitalization: TextCapitalization.sentences,
             decoration: const InputDecoration(
@@ -282,17 +331,66 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
           ),
           const SizedBox(height: 14),
 
-          // Champ : Responsable du service
-          TextFormField(
-            controller: _headNameCtrl,
-            textCapitalization: TextCapitalization.words,
-            maxLength: 120,
+          DropdownButtonFormField<String>(
+            initialValue:
+                widget.users.any(
+                  (user) =>
+                      user.id == _headUserId &&
+                      user.role == StaffRole.serviceHead &&
+                      user.isActive,
+                )
+                ? _headUserId
+                : null,
             decoration: const InputDecoration(
-              labelText: 'Chef / Responsable',
+              labelText: 'Chef de service',
               prefixIcon: Icon(Icons.person_outlined),
-              hintText: 'Dr Nom Prénom',
-              counterText: '',
             ),
+            hint: const Text('Aucun chef sélectionné'),
+            items: [
+              const DropdownMenuItem<String>(value: null, child: Text('Aucun')),
+              ...widget.users
+                  .where(
+                    (user) =>
+                        user.role == StaffRole.serviceHead && user.isActive,
+                  )
+                  .map(
+                    (user) => DropdownMenuItem<String>(
+                      value: user.id,
+                      child: Text(user.displayName),
+                    ),
+                  ),
+            ],
+            onChanged: (value) => setState(() => _headUserId = value),
+          ),
+
+          const SizedBox(height: 12),
+          const Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Text(
+              'Fonctionnalités du service',
+              style: TextStyle(
+                color: AppColors.navy,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Rendez-vous'),
+            value: _hasAppointments,
+            onChanged: (value) => setState(() => _hasAppointments = value),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Opérations'),
+            value: _hasOperations,
+            onChanged: (value) => setState(() => _hasOperations = value),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Gardes'),
+            value: _hasOnCall,
+            onChanged: (value) => setState(() => _hasOnCall = value),
           ),
 
           // Switch actif/inactif (édition seulement)
@@ -300,8 +398,13 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
             const SizedBox(height: 8),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Service actif',
-                  style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.w600)),
+              title: const Text(
+                'Service actif',
+                style: TextStyle(
+                  color: AppColors.navy,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               subtitle: Text(
                 _isActive ? 'Visible par le personnel' : 'Masqué au personnel',
                 style: const TextStyle(color: Color(0xFF687B86), fontSize: 12),
@@ -406,7 +509,9 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
             validator: (v) {
               if (v == null || v.trim().isEmpty) return null; // Optionnel
               final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
-              if (!emailRegex.hasMatch(v.trim())) return 'Adresse e-mail invalide.';
+              if (!emailRegex.hasMatch(v.trim())) {
+                return 'Adresse e-mail invalide.';
+              }
               return null;
             },
           ),
@@ -461,7 +566,8 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
           // Notes internes
           TextFormField(
             controller: _notesCtrl,
-            minLines: 2, maxLines: 4,
+            minLines: 2,
+            maxLines: 4,
             maxLength: 500,
             textCapitalization: TextCapitalization.sentences,
             decoration: const InputDecoration(
@@ -495,7 +601,9 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
             style: OutlinedButton.styleFrom(
               foregroundColor: const Color(0xFF687B86),
               side: const BorderSide(color: Color(0xFFD6E0E5)),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
             ),
             child: const Text('Annuler'),
@@ -504,11 +612,16 @@ class _ServiceFormDialogState extends State<ServiceFormDialog>
           // Bouton Enregistrer / Créer
           FilledButton.icon(
             onPressed: _submit,
-            icon: Icon(_isEditing ? Icons.check_rounded : Icons.add_rounded, size: 18),
+            icon: Icon(
+              _isEditing ? Icons.check_rounded : Icons.add_rounded,
+              size: 18,
+            ),
             label: Text(_isEditing ? 'Enregistrer' : 'Créer le service'),
             style: FilledButton.styleFrom(
               backgroundColor: AppColors.blue,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
               padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
             ),
           ),

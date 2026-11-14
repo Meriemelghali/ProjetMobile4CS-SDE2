@@ -9,6 +9,12 @@ const shiftRoutes = require('./routes/shiftRoutes');
 const handoverRoutes = require('./routes/handoverRoutes');
 const appointmentRoutes = require('./routes/appointmentRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const hospitalRoutes = require('./routes/hospitalRoutes');
+const roomRoutes = require('./routes/roomRoutes');
+const bedRoutes = require('./routes/bedRoutes');
+const operatingRoomRoutes = require('./routes/operatingRoomRoutes');
+const interventionRoutes = require('./routes/interventionRoutes');
+const equipmentRoutes = require('./routes/equipmentRoutes');
 
 const app = express();
 
@@ -38,6 +44,12 @@ app.use('/shifts', shiftRoutes);
 app.use('/handovers', handoverRoutes);
 app.use('/appointments', appointmentRoutes);
 app.use('/notifications', notificationRoutes);
+app.use('/hospitals', hospitalRoutes);
+app.use('/rooms', roomRoutes);
+app.use('/beds', bedRoutes);
+app.use('/operating-rooms', operatingRoomRoutes);
+app.use('/interventions', interventionRoutes);
+app.use('/equipment', equipmentRoutes);
 app.use(notFound);
 app.use(errorHandler);
 

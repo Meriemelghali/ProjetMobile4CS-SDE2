@@ -66,8 +66,10 @@ try {
 ```
 
 Connectez-vous ensuite dans l’application avec `admin@example.test` et le
-mot de passe choisi. Depuis l’onglet **Admin**, créez les services et les
-comptes du personnel.
+mot de passe choisi. Depuis l’onglet **Admin**, gérez les comptes et les
+plannings. Dans l’onglet **Hôpital**, l’Administrateur gère les ressources ;
+les médecins et soignants peuvent les consulter. Utilisez uniquement des
+comptes et des données fictifs pour les patients.
 
 ## 2. Démarrer l’application Flutter
 

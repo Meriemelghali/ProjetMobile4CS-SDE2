@@ -14,6 +14,9 @@ const serviceSchema = new mongoose.Schema(
     description: { type: String, default: '', trim: true, maxlength: 1000 },
     location:    { type: String, default: '', trim: true, maxlength: 160 },
     active:      { type: Boolean, default: true },
+    a_rdv:       { type: Boolean, default: false },
+    a_operations:{ type: Boolean, default: false },
+    a_gardes:    { type: Boolean, default: false },
 
     // --- Nouveaux champs optionnels (ajoutés par le module services SDE2) ---
     // Tous ont une valeur par défaut → les anciens documents existants ne sont pas cassés
@@ -38,6 +41,7 @@ const serviceSchema = new mongoose.Schema(
 
     // Nom du responsable / chef de service
     headName:     { type: String, default: '', trim: true, maxlength: 120 },
+    headUserId:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 
     // Horaires d'ouverture (ex : "Lun–Ven 08h00–18h00 / Urgences 24h/24")
     openingHours: { type: String, default: '', trim: true, maxlength: 200 },

@@ -94,9 +94,11 @@ async function notifyPatient(appointment, title, message) {
 async function doctorIsBookable(doctorId) {
   return User.findOne({
     _id: doctorId,
-    role: 'doctor',
     active: true,
-  }).select('serviceId').populate('serviceId', 'active');
+    $or: [{ role: 'doctor' }, { roles: 'doctor' }],
+  })
+    .select('serviceId serviceIds')
+    .populate('serviceId', 'name location phone email active a_rdv');
 }
 
 function generateAvailableSlots(
@@ -183,7 +185,10 @@ async function parseFields(body, {
   if (creating || body.doctorId !== undefined) {
     fields.doctorId = requireId(body.doctorId, 'doctorId');
     const doctor = await doctorIsBookable(fields.doctorId);
-    if (!doctor || !doctor.serviceId || doctor.serviceId.active !== true) {
+    if (!doctor ||
+        !doctor.serviceId ||
+        doctor.serviceId.active !== true ||
+        doctor.serviceId.a_rdv !== true) {
       throw new HttpError(400, 'doctorId must refer to an active doctor in an active service.');
     }
   }
@@ -205,7 +210,10 @@ async function parseFields(body, {
 }
 
 async function listDoctors(req, res) {
-  const query = { role: 'doctor', active: true };
+  const filters = [
+    { $or: [{ role: 'doctor' }, { roles: 'doctor' }] },
+    { active: true },
+  ];
   const requestedServiceId = req.query.serviceId === undefined
     ? null
     : requireId(req.query.serviceId, 'serviceId');
@@ -214,17 +222,30 @@ async function listDoctors(req, res) {
     if (requestedServiceId && !ids.includes(requestedServiceId)) {
       return res.json({ doctors: [] });
     }
-    query.serviceId = requestedServiceId || { $in: ids };
+    const assignedIds = requestedServiceId ? [requestedServiceId] : ids;
+    filters.push({
+      $or: [
+        { serviceId: { $in: assignedIds } },
+        { serviceIds: { $in: assignedIds } },
+      ],
+    });
   } else if (requestedServiceId) {
-    query.serviceId = requestedServiceId;
+    filters.push({
+      $or: [
+        { serviceId: requestedServiceId },
+        { serviceIds: requestedServiceId },
+      ],
+    });
   }
-  const doctors = await User.find(query)
+  const doctors = await User.find({ $and: filters })
     .select('username serviceId specialty photoUrl')
-    .populate('serviceId', 'name location phone email active')
+    .populate('serviceId', 'name location phone email active a_rdv')
     .sort({ username: 1 })
     .limit(200);
   return res.json({
-    doctors: doctors.filter((doctor) => doctor.serviceId?.active === true).map((doctor) => ({
+    doctors: doctors.filter((doctor) =>
+      doctor.serviceId?.active === true && doctor.serviceId?.a_rdv === true
+    ).map((doctor) => ({
       _id: doctor._id,
       username: doctor.username,
       specialty: doctor.specialty || '',
@@ -245,7 +266,13 @@ async function list(req, res) {
   if (req.user.role === 'secretary') {
     const ids = serviceIdsFor(req.user);
     const doctors = ids.length
-      ? await User.find({ role: 'doctor', serviceId: { $in: ids } }).select('_id')
+      ? await User.find({
+          active: true,
+          $and: [
+            { $or: [{ role: 'doctor' }, { roles: 'doctor' }] },
+            { $or: [{ serviceId: { $in: ids } }, { serviceIds: { $in: ids } }] },
+          ],
+        }).select('_id')
       : [];
     query.doctorId = { $in: doctors.map((doctor) => doctor._id) };
   }
@@ -254,7 +281,7 @@ async function list(req, res) {
     .populate({
       path: 'doctorId',
       select: 'username serviceId specialty photoUrl',
-      populate: { path: 'serviceId', select: 'name location phone email' },
+      populate: { path: 'serviceId', select: 'name location phone email active a_rdv' },
     })
     .populate('claimedBy', 'username')
     .sort({ startAt: 1 })
@@ -268,7 +295,10 @@ async function available(req, res) {
   if (date === undefined) throw new HttpError(400, 'date is required.');
   await requireDateOnly(date);
   const doctor = await doctorIsBookable(doctorId);
-  if (!doctor || !doctor.serviceId || doctor.serviceId.active !== true) {
+  if (!doctor ||
+      !doctor.serviceId ||
+      doctor.serviceId.active !== true ||
+      doctor.serviceId.a_rdv !== true) {
     throw new HttpError(404, 'Doctor not found.');
   }
   const doctorServiceId = doctor.serviceId._id?.toString() || doctor.serviceId.toString();
@@ -381,7 +411,10 @@ async function update(req, res) {
       throw new HttpError(400, 'startAt must be in the future.');
     }
     const doctor = await doctorIsBookable(doctorId);
-    if (!doctor || !doctor.serviceId || doctor.serviceId.active !== true) {
+    if (!doctor ||
+        !doctor.serviceId ||
+        doctor.serviceId.active !== true ||
+        doctor.serviceId.a_rdv !== true) {
       throw new HttpError(409, 'The selected doctor or service is no longer active.');
     }
     await assertSlotAvailable(doctorId, startAt, current._id);

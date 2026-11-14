@@ -33,6 +33,7 @@ class UserService {
     required String email,
     required String password,
     required String role,
+    List<String> roles = const [],
     String? serviceId,
     List<String> serviceIds = const [],
     String specialty = '',
@@ -45,8 +46,11 @@ class UserService {
         'email': email,
         'password': password,
         'role': role,
+        'roles': roles.isEmpty ? [role] : roles,
         'serviceId': ?serviceId,
-        if (serviceIds.isNotEmpty || role == 'secretary')
+        if (serviceIds.isNotEmpty ||
+            role == 'secretary' ||
+            roles.contains('secretary'))
           'serviceIds': serviceIds,
         'specialty': specialty,
         'photoUrl': photoUrl,

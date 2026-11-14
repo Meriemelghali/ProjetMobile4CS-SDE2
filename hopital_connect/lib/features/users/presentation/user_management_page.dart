@@ -64,6 +64,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
         email: input.email,
         password: input.password!,
         role: input.role.apiValue,
+        roles: input.roles.map((role) => role.apiValue).toList(),
         serviceId: input.serviceId,
         serviceIds: input.serviceIds,
         specialty: input.specialty,
@@ -102,6 +103,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
       displayName: user.displayName,
       email: user.email,
       role: user.role,
+      roles: user.assignedRoles,
       serviceId: user.serviceId,
       serviceIds: user.serviceIds,
       specialty: user.specialty,
@@ -188,7 +190,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
                     ),
                     title: Text(user.displayName),
                     subtitle: Text(
-                      '${user.email}\n${user.role.label} · ${user.isActive ? 'Actif' : 'Désactivé'}${assignedServices.isEmpty ? '' : '\nServices : $assignedServices'}',
+                      '${user.email}\n${user.assignedRoles.map((role) => role.label).join(', ')} · ${user.isActive ? 'Actif' : 'Désactivé'}${assignedServices.isEmpty ? '' : '\nServices : $assignedServices'}',
                     ),
                     isThreeLine: assignedServices.isNotEmpty,
                     trailing: PopupMenuButton<String>(
@@ -228,6 +230,7 @@ class _NewUserInput {
     required this.username,
     required this.email,
     required this.role,
+    required this.roles,
     required this.serviceIds,
     required this.specialty,
     required this.photoUrl,
@@ -238,6 +241,7 @@ class _NewUserInput {
   final String username;
   final String email;
   final StaffRole role;
+  final List<StaffRole> roles;
   final String? serviceId;
   final List<String> serviceIds;
   final String specialty;
@@ -270,16 +274,20 @@ class _UserDialogState extends State<_UserDialog> {
   late final _photoUrlController = TextEditingController(
     text: widget.user?.photoUrl ?? '',
   );
-  late StaffRole _role = widget.user?.role ?? StaffRole.nurse;
-  late String? _doctorServiceId = widget.user?.serviceId;
+  late Set<StaffRole> _roles = Set.of(
+    widget.user?.assignedRoles ?? [StaffRole.nurse],
+  );
   String? _assignmentError;
-  late final Set<String> _secretaryServiceIds = {
+  late final Set<String> _assignedServiceIds = {
     if (widget.user != null) ...widget.user!.serviceIds,
     if (widget.user != null &&
         widget.user!.serviceIds.isEmpty &&
         widget.user!.serviceId != null)
       widget.user!.serviceId!,
   };
+
+  StaffRole get _primaryRole =>
+      _roles.contains(widget.user?.role) ? widget.user!.role : _roles.first;
 
   @override
   void dispose() {
@@ -292,20 +300,23 @@ class _UserDialogState extends State<_UserDialog> {
   }
 
   void _save() {
-    if (!_formKey.currentState!.validate()) return;
-    if (_role == StaffRole.secretary && _secretaryServiceIds.isEmpty) {
+    if (!_formKey.currentState!.validate() || _roles.isEmpty) return;
+    if (_roles.contains(StaffRole.secretary) && _assignedServiceIds.isEmpty) {
       setState(
         () =>
             _assignmentError = 'Affectez au moins un service à la secrétaire.',
       );
       return;
     }
-    final serviceIds = _role == StaffRole.secretary
-        ? _secretaryServiceIds.toList()
+    final serviceIds =
+        _roles.contains(StaffRole.doctor) ||
+            _roles.contains(StaffRole.secretary)
+        ? _assignedServiceIds.toList()
         : const <String>[];
-    final serviceId = _role == StaffRole.doctor
-        ? _doctorServiceId
-        : _role == StaffRole.secretary && serviceIds.isNotEmpty
+    final serviceId =
+        (_roles.contains(StaffRole.doctor) ||
+                _roles.contains(StaffRole.secretary)) &&
+            serviceIds.isNotEmpty
         ? serviceIds.first
         : null;
     if (widget.user case final user?) {
@@ -314,7 +325,8 @@ class _UserDialogState extends State<_UserDialog> {
           id: user.id,
           displayName: _nameController.text.trim(),
           email: _emailController.text.trim(),
-          role: _role,
+          role: _primaryRole,
+          roles: _roles.toList(),
           serviceId: serviceId,
           serviceIds: serviceIds,
           specialty: _specialtyController.text.trim(),
@@ -327,7 +339,8 @@ class _UserDialogState extends State<_UserDialog> {
         _NewUserInput(
           username: _nameController.text.trim(),
           email: _emailController.text.trim(),
-          role: _role,
+          role: _primaryRole,
+          roles: _roles.toList(),
           serviceId: serviceId,
           serviceIds: serviceIds,
           specialty: _specialtyController.text.trim(),
@@ -387,36 +400,41 @@ class _UserDialogState extends State<_UserDialog> {
                   ),
                 ],
                 const SizedBox(height: 12),
-                DropdownButtonFormField<StaffRole>(
-                  initialValue: _role,
-                  decoration: const InputDecoration(labelText: 'Rôle'),
-                  items: [
-                    for (final role in StaffRole.values)
-                      DropdownMenuItem(value: role, child: Text(role.label)),
-                  ],
-                  onChanged: (role) {
-                    if (role != null) setState(() => _role = role);
-                  },
-                ),
-                if (_role == StaffRole.doctor) ...[
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String?>(
-                    initialValue: _doctorServiceId,
-                    decoration: const InputDecoration(labelText: 'Service'),
-                    items: [
-                      const DropdownMenuItem<String?>(
-                        value: null,
-                        child: Text('Aucun service'),
-                      ),
-                      for (final service in widget.services)
-                        DropdownMenuItem<String?>(
-                          value: service.id,
-                          child: Text(service.name),
-                        ),
-                    ],
-                    onChanged: (value) =>
-                        setState(() => _doctorServiceId = value),
+                FormField<Set<StaffRole>>(
+                  initialValue: _roles,
+                  validator: (roles) => roles == null || roles.isEmpty
+                      ? 'Sélectionnez au moins un rôle.'
+                      : null,
+                  builder: (field) => InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: 'Rôles attribués',
+                      errorText: field.errorText,
+                      border: const OutlineInputBorder(),
+                    ),
+                    child: Column(
+                      children: [
+                        for (final role in StaffRole.values)
+                          CheckboxListTile(
+                            contentPadding: EdgeInsets.zero,
+                            dense: true,
+                            title: Text(role.label),
+                            value: _roles.contains(role),
+                            onChanged: (selected) {
+                              setState(() {
+                                if (selected == true) {
+                                  _roles = {..._roles, role};
+                                } else {
+                                  _roles = {..._roles}..remove(role);
+                                }
+                              });
+                              field.didChange(_roles);
+                            },
+                          ),
+                      ],
+                    ),
                   ),
+                ),
+                if (_roles.contains(StaffRole.doctor)) ...[
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _specialtyController,
@@ -434,17 +452,21 @@ class _UserDialogState extends State<_UserDialog> {
                     ),
                   ),
                 ],
-                if (_role == StaffRole.secretary) ...[
+                if (_roles.contains(StaffRole.doctor) ||
+                    _roles.contains(StaffRole.secretary)) ...[
                   const SizedBox(height: 12),
                   const Align(
                     alignment: AlignmentDirectional.centerStart,
                     child: Text(
-                      'Services affectés',
+                      'Services rattachés',
                       style: TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
-                  if (widget.services.isEmpty)
+                  if (widget.services.isEmpty &&
+                      _roles.contains(StaffRole.secretary))
                     const Text('Créez un service avant l’affectation.')
+                  else if (widget.services.isEmpty)
+                    const Text('Aucun service disponible.')
                   else
                     Wrap(
                       spacing: 8,
@@ -452,12 +474,12 @@ class _UserDialogState extends State<_UserDialog> {
                         for (final service in widget.services)
                           FilterChip(
                             label: Text(service.name),
-                            selected: _secretaryServiceIds.contains(service.id),
+                            selected: _assignedServiceIds.contains(service.id),
                             onSelected: (selected) => setState(() {
                               if (selected) {
-                                _secretaryServiceIds.add(service.id);
+                                _assignedServiceIds.add(service.id);
                               } else {
-                                _secretaryServiceIds.remove(service.id);
+                                _assignedServiceIds.remove(service.id);
                               }
                               _assignmentError = null;
                             }),

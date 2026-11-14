@@ -23,17 +23,35 @@ function handoverResponse(handover, userId) {
   };
 }
 
+async function serviceIdsForUser(user) {
+  if (user.role === 'service_head') {
+    const services = await Service.find({ headUserId: user._id }).select('_id');
+    return services.map((service) => service._id.toString());
+  }
+  const serviceIds = [
+    ...(user.serviceIds || []).map((id) => id.toString()),
+    ...(user.serviceId ? [user.serviceId.toString()] : []),
+  ];
+  return [...new Set(serviceIds)];
+}
+
 async function list(req, res) {
   const query = {};
-  if (req.user.role !== 'admin') {
-    const assignedServiceId = req.user.serviceId?.toString();
-    if (req.query.serviceId !== undefined &&
-        req.query.serviceId !== assignedServiceId) {
-      throw new HttpError(403, 'You can only view handovers for your service.');
+  if (req.user.role === 'admin') {
+    if (req.query.serviceId !== undefined) {
+      query.serviceId = requireId(req.query.serviceId, 'serviceId');
     }
-    query.serviceId = assignedServiceId || null;
-  } else if (req.query.serviceId !== undefined) {
-    query.serviceId = requireId(req.query.serviceId, 'serviceId');
+  } else {
+    const assignedServiceIds = await serviceIdsForUser(req.user);
+    if (req.query.serviceId !== undefined) {
+      const requestedServiceId = requireId(req.query.serviceId, 'serviceId');
+      if (!assignedServiceIds.includes(requestedServiceId)) {
+        throw new HttpError(403, 'You can only view handovers for your service.');
+      }
+      query.serviceId = requestedServiceId;
+    } else {
+      query.serviceId = { $in: assignedServiceIds };
+    }
   }
   const handovers = await Handover.find(query)
     .populate('authorId', 'username')
@@ -52,7 +70,7 @@ async function create(req, res) {
     throw new HttpError(400, 'serviceId does not exist.');
   }
   if (req.user.role !== 'admin' &&
-      serviceId !== req.user.serviceId?.toString()) {
+      !(await serviceIdsForUser(req.user)).includes(serviceId)) {
     throw new HttpError(403, 'You can only create handovers for your service.');
   }
   const handover = await Handover.create({
@@ -74,7 +92,7 @@ async function markRead(req, res) {
   const handover = await Handover.findById(id);
   if (!handover) throw new HttpError(404, 'Handover not found.');
   if (req.user.role !== 'admin' &&
-      handover.serviceId.toString() !== req.user.serviceId?.toString()) {
+      !(await serviceIdsForUser(req.user)).includes(handover.serviceId.toString())) {
     throw new HttpError(403, 'You can only read handovers for your service.');
   }
   const updated = await Handover.findByIdAndUpdate(
@@ -85,4 +103,4 @@ async function markRead(req, res) {
   return res.json({ handover: handoverResponse(updated, req.user.id) });
 }
 
-module.exports = { list, create, markRead, handoverResponse };
+module.exports = { list, create, markRead, handoverResponse, serviceIdsForUser };
