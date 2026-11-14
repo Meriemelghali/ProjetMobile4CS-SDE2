@@ -13,6 +13,7 @@ import '../../planning/domain/shift.dart';
 import '../../planning/presentation/planning_tab.dart';
 import '../../services/data/service_service.dart';
 import '../../services/domain/hospital_service.dart';
+import '../../services/presentation/service_form_dialog.dart';
 import '../../services/presentation/services_tab.dart';
 import '../../transmissions/data/handover_service.dart';
 import '../../transmissions/domain/handover.dart';
@@ -162,7 +163,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _addService() async {
     final draft = await showDialog<HospitalService>(
       context: context,
-      builder: (_) => const NewServiceDialog(),
+      builder: (_) => const ServiceFormDialog(),
     );
     if (draft == null || !mounted) return;
     try {
@@ -176,11 +177,20 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _editService(HospitalService service) async {
     final edited = await showDialog<HospitalService>(
       context: context,
-      builder: (_) => NewServiceDialog(service: service),
+      builder: (_) => ServiceFormDialog(service: service),
     );
     if (edited == null || !mounted) return;
     try {
       await ServiceService().update(edited);
+      await _load();
+    } on ApiException catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _toggleServiceActive(HospitalService service) async {
+    try {
+      await ServiceService().toggleActive(service);
       await _load();
     } on ApiException catch (error) {
       _showError(error);
@@ -276,6 +286,8 @@ class _DashboardPageState extends State<DashboardPage> {
               services: _services,
               canEdit: isAdmin,
               onEdit: _editService,
+              onToggleActive: _toggleServiceActive,
+              onAdd: _addService,
             ),
             HandoversTab(
               handovers: _handovers,

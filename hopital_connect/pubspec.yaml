@@ -36,6 +36,12 @@ dependencies:
   cupertino_icons: ^1.0.8
   http: ^1.6.0
   shared_preferences: ^2.5.6
+  # Ouvre des URLs externes : Maps, téléphone, email, navigateur
+  url_launcher: ^6.3.1
+  # Partage de contenu vers d'autres apps (iOS/Android)
+  share_plus: ^10.1.4
+  # Génération de QR codes
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:
