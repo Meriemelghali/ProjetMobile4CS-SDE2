@@ -52,7 +52,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
         username: input.username,
         email: input.email,
         password: input.password!,
-        role: input.role.apiValue,
+        roles: input.roles.map((role) => role.apiValue).toList(),
       );
       if (mounted) setState(() => _users = [..._users, user]);
     } on ApiException catch (error) {
@@ -87,6 +87,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
       displayName: user.displayName,
       email: user.email,
       role: user.role,
+      roles: user.assignedRoles,
       serviceId: user.serviceId,
       isActive: !user.isActive,
     );
@@ -106,9 +107,8 @@ class _UserManagementPageState extends State<UserManagementPage> {
   }
 
   void _showError(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -163,7 +163,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
                     ),
                     title: Text(user.displayName),
                     subtitle: Text(
-                      '${user.email}\n${user.role.label} · ${user.isActive ? 'Actif' : 'Désactivé'}',
+                      '${user.email}\n${user.assignedRoles.map((role) => role.label).join(', ')} · ${user.isActive ? 'Actif' : 'Désactivé'}',
                     ),
                     isThreeLine: true,
                     trailing: PopupMenuButton<String>(
@@ -202,13 +202,13 @@ class _NewUserInput {
   const _NewUserInput({
     required this.username,
     required this.email,
-    required this.role,
+    required this.roles,
     this.password,
   });
 
   final String username;
   final String email;
-  final StaffRole role;
+  final List<StaffRole> roles;
   final String? password;
 }
 
@@ -230,7 +230,9 @@ class _UserDialogState extends State<_UserDialog> {
     text: widget.user?.email ?? '',
   );
   final _passwordController = TextEditingController();
-  late StaffRole _role = widget.user?.role ?? StaffRole.nurse;
+  late Set<StaffRole> _roles = Set.of(
+    widget.user?.assignedRoles ?? [StaffRole.nurse],
+  );
 
   @override
   void dispose() {
@@ -241,14 +243,15 @@ class _UserDialogState extends State<_UserDialog> {
   }
 
   void _save() {
-    if (!_formKey.currentState!.validate()) return;
+    if (!_formKey.currentState!.validate() || _roles.isEmpty) return;
     if (widget.user case final user?) {
       Navigator.of(context).pop(
         StaffUser(
           id: user.id,
           displayName: _nameController.text.trim(),
           email: _emailController.text.trim(),
-          role: _role,
+          role: _roles.first,
+          roles: _roles.toList(),
           serviceId: user.serviceId,
           isActive: user.isActive,
         ),
@@ -258,7 +261,7 @@ class _UserDialogState extends State<_UserDialog> {
         _NewUserInput(
           username: _nameController.text.trim(),
           email: _emailController.text.trim(),
-          role: _role,
+          roles: _roles.toList(),
           password: _passwordController.text,
         ),
       );
@@ -290,7 +293,9 @@ class _UserDialogState extends State<_UserDialog> {
                 TextFormField(
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(labelText: 'Adresse e-mail'),
+                  decoration: const InputDecoration(
+                    labelText: 'Adresse e-mail',
+                  ),
                   validator: (value) {
                     final email = value?.trim() ?? '';
                     return email.contains('@')
@@ -312,16 +317,39 @@ class _UserDialogState extends State<_UserDialog> {
                   ),
                 ],
                 const SizedBox(height: 12),
-                DropdownButtonFormField<StaffRole>(
-                  initialValue: _role,
-                  decoration: const InputDecoration(labelText: 'Rôle'),
-                  items: [
-                    for (final role in StaffRole.values)
-                      DropdownMenuItem(value: role, child: Text(role.label)),
-                  ],
-                  onChanged: (role) {
-                    if (role != null) setState(() => _role = role);
-                  },
+                FormField<Set<StaffRole>>(
+                  initialValue: _roles,
+                  validator: (roles) => roles == null || roles.isEmpty
+                      ? 'Sélectionnez au moins un rôle.'
+                      : null,
+                  builder: (field) => InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: 'Rôles attribués',
+                      errorText: field.errorText,
+                      border: const OutlineInputBorder(),
+                    ),
+                    child: Column(
+                      children: [
+                        for (final role in StaffRole.values)
+                          CheckboxListTile(
+                            contentPadding: EdgeInsets.zero,
+                            dense: true,
+                            title: Text(role.label),
+                            value: _roles.contains(role),
+                            onChanged: (selected) {
+                              setState(() {
+                                if (selected == true) {
+                                  _roles = {..._roles, role};
+                                } else {
+                                  _roles = {..._roles}..remove(role);
+                                }
+                              });
+                              field.didChange(_roles);
+                            },
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),

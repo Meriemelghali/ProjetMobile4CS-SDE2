@@ -10,14 +10,16 @@ L’équipe a aussi proposé des fonctions de rendez-vous, de pharmacie et de do
 
 | Rôle | Accès prévu dans le projet |
 | --- | --- |
-| Administrateur | Gérer les comptes du personnel, les rôles, les services et les plannings. |
-| Médecin | Consulter son service et ses gardes, lire et publier les transmissions autorisées. Les rendez-vous et dossiers patients sont des extensions. |
-| Personnel soignant | Consulter son service et son planning, lire et publier les transmissions autorisées. |
+| Administrateur | Gérer les comptes, l’hôpital, les ressources, les services et les plannings. |
+| Chef de service | Consulter les ressources hospitalières, son service, son planning et les transmissions ; publier des transmissions. |
+| Secrétaire | Consulter les services, les ressources hospitalières, son planning et les transmissions de son service. |
+| Médecin | Consulter les ressources hospitalières, son service et ses gardes, lire et publier les transmissions autorisées. |
+| Personnel soignant | Consulter les ressources hospitalières, son service et son planning, lire et publier les transmissions autorisées. |
 | Pharmacien | Rôle à ajouter seulement si le module pharmacie est validé ; gérer le catalogue et les stocks. |
 | Patient | Pas d’accès dans le MVP interne. À ajouter seulement si l’équipe transforme le projet en application destinée aussi aux patients. |
 | Professeur | Encadrant et évaluateur du projet, pas un utilisateur métier de l’application, sauf consigne contraire de l’enseignant. |
 
-Les rôles doivent être attribués par l’administrateur dans une vraie version. Le choix de rôle sur l’écran actuel sert uniquement à la démonstration et n’est pas une authentification sécurisée.
+Un compte peut recevoir plusieurs rôles par l’administrateur. Après une connexion réussie, l’utilisateur choisit le profil avec lequel ouvrir sa session ; les autorisations de l’API sont limitées à ce rôle pour la session en cours. L’inscription publique crée toujours un compte Patient uniquement.
 
 ## 3. Catalogue des modules
 
@@ -29,7 +31,7 @@ Fonctionnalités prévues :
 
 - Se connecter et se déconnecter.
 - Consulter son profil : nom, adresse e-mail, rôle et service de rattachement.
-- Attribuer les rôles Administrateur, Médecin et Personnel soignant.
+- Attribuer un ou plusieurs rôles parmi Administrateur, Chef de service, Médecin, Personnel soignant, Secrétaire et Patient.
 - Créer, modifier et désactiver un compte du personnel (Administrateur).
 - Restreindre les écrans et actions selon le rôle.
 - Réinitialiser un mot de passe dans une version avec backend.
@@ -38,15 +40,19 @@ Fonctionnalités prévues :
 
 ### Module 2 — Gestion de l’hôpital
 
-**But :** présenter les informations générales utiles au personnel.
+**But :** gérer la structure et les ressources matérielles de l’établissement.
 
-Fonctionnalités envisagées :
+Fonctionnalités :
 
-- Consulter le nom et les coordonnées de l’établissement.
-- Consulter la liste des services et leur emplacement.
-- Administrer les informations de l’établissement (Administrateur), si cette partie est exigée par le cours.
+- Créer et modifier les hôpitaux et rattacher les services à un hôpital.
+- Gérer les chambres par service et leurs états.
+- Ajouter des lits, affecter un patient lors d’une admission, puis libérer le lit à la sortie.
+- Consulter les lits disponibles et le taux d’occupation par service ou hôpital.
+- Gérer les salles d’opération et planifier les interventions avec contrôle des conflits de créneaux.
+- Affecter du matériel aux services ou aux salles, signaler les pannes et suivre la maintenance.
+- Autoriser la consultation aux médecins et au personnel soignant ; réserver les modifications à l’Administrateur.
 
-**Priorité :** informations de base et annuaire des services ; la gestion exhaustive de l’hôpital est hors MVP.
+**Priorité :** module disponible avec des données de démonstration uniquement. Ne saisissez aucune donnée réelle ou identifiable de patient.
 
 ### Module 3 — Gestion des services et des équipes
 
@@ -149,7 +155,7 @@ Fonctionnalités prévues ou envisagées :
 | Module | MVP | Extension | Remarque |
 | --- | :---: | :---: | --- |
 | Authentification et utilisateurs | Oui, version de démonstration | Oui | L’authentification sécurisée nécessite un backend. |
-| Gestion de l’hôpital | Partielle | Oui | Annuaire de services d’abord. |
+| Gestion de l’hôpital et de ses ressources | Oui |  | Données de démonstration ; consultation pour le personnel autorisé et gestion par l’Administrateur. |
 | Services et équipes | Oui |  | Fonctions de base pour l’organisation du personnel. |
 | Planning du personnel | Oui |  | Gardes par date, service et membre. |
 | Transmissions opérationnelles | Oui |  | Aucun renseignement médical identifiable. |
@@ -168,12 +174,12 @@ La démonstration doit montrer un parcours cohérent du personnel :
 3. Consulter un service et son équipe.
 4. Consulter le planning et, en Administrateur, ajouter une garde.
 5. Consulter et publier une transmission opérationnelle fictive.
+6. Consulter les lits et équipements, puis tester une affectation et une intervention avec des données fictives.
 
 Les rendez-vous patients, le dossier médical et la pharmacie seront ajoutés seulement après validation du premier périmètre par l’enseignant et par l’équipe.
 
 ## 6. Limites actuelles du prototype
 
-- Pas de serveur ni de base de données partagée.
-- Les services, gardes et transmissions ajoutés sont temporaires et disparaissent à la fermeture de la session.
-- La connexion et le choix de rôle sont simulés ; ils ne protègent pas réellement les données.
-- Toutes les informations affichées sont fictives.
+- Les données du backend sont persistées dans MongoDB ; la disponibilité dépend de la configuration du serveur.
+- Les accès aux ressources sont contrôlés par rôle par l’API ; l’interface Flutter ne remplace pas ces contrôles.
+- Utilisez exclusivement des données fictives : cette application de démonstration n’est pas conçue pour héberger des informations de santé réelles.

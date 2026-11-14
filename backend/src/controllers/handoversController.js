@@ -24,7 +24,14 @@ function handoverResponse(handover) {
 
 async function list(req, res) {
   const query = {};
-  if (req.query.serviceId !== undefined) {
+  if (req.user.role === 'service_head') {
+    const service = await Service.findOne({ headUserId: req.user._id }).select('_id');
+    if (!service) throw new HttpError(403, 'No service is assigned to this service head.');
+    query.serviceId = service._id;
+  } else if (req.user.role === 'secretary') {
+    if (!req.user.serviceId) return res.json({ handovers: [] });
+    query.serviceId = req.user.serviceId;
+  } else if (req.query.serviceId !== undefined) {
     query.serviceId = requireId(req.query.serviceId, 'serviceId');
   }
   const handovers = await Handover.find(query)
@@ -38,7 +45,9 @@ async function create(req, res) {
   const body = requireObject(req.body);
   rejectUnknownFields(body, ['serviceId', 'title', 'content', 'important']);
   const serviceId = requireId(body.serviceId, 'serviceId');
-  if (!(await Service.exists({ _id: serviceId }))) {
+  const serviceQuery = { _id: serviceId };
+  if (req.user.role === 'service_head') serviceQuery.headUserId = req.user._id;
+  if (!(await Service.exists(serviceQuery))) {
     throw new HttpError(400, 'serviceId does not exist.');
   }
   const handover = await Handover.create({

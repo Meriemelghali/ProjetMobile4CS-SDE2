@@ -10,12 +10,13 @@ const {
   requireObject,
   requirePassword,
   requireRole,
+  requireRoles,
   requireString,
   rejectUnknownFields,
 } = require('../utils/validation');
 
-const CREATE_FIELDS = ['username', 'email', 'password', 'role', 'serviceId', 'active'];
-const UPDATE_FIELDS = ['username', 'email', 'password', 'role', 'serviceId', 'active'];
+const CREATE_FIELDS = ['username', 'email', 'password', 'role', 'roles', 'serviceId', 'active'];
+const UPDATE_FIELDS = ['username', 'email', 'password', 'role', 'roles', 'serviceId', 'active'];
 
 async function validateService(serviceId) {
   if (serviceId === null) return null;
@@ -31,7 +32,13 @@ function parseUserFields(body, { creating = false } = {}) {
   }
   if (creating || body.email !== undefined) result.email = requireEmail(body.email);
   if (creating || body.password !== undefined) result.password = requirePassword(body.password);
-  if (creating || body.role !== undefined) result.role = requireRole(body.role);
+  if (creating || body.role !== undefined || body.roles !== undefined) {
+    const roles = body.roles === undefined
+      ? [requireRole(body.role)]
+      : requireRoles(body.roles);
+    result.roles = roles;
+    result.role = roles[0];
+  }
   if (creating || body.serviceId !== undefined) result.serviceId = body.serviceId ?? null;
   if (creating || body.active !== undefined) {
     result.active = body.active === undefined ? true : requireBoolean(body.active, 'active');

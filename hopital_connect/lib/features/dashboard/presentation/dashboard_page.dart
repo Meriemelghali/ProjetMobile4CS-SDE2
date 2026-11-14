@@ -8,11 +8,14 @@ import '../../../shared/widgets.dart';
 import '../../admin/presentation/admin_tab.dart';
 import '../../auth/data/auth_service.dart';
 import '../../auth/presentation/login_page.dart';
+import '../../hospital/data/hospital_resource_service.dart';
+import '../../hospital/presentation/hospital_tab.dart';
 import '../../planning/data/shift_service.dart';
 import '../../planning/domain/shift.dart';
 import '../../planning/presentation/planning_tab.dart';
 import '../../services/data/service_service.dart';
 import '../../services/domain/hospital_service.dart';
+import '../../services/presentation/service_form_dialog.dart';
 import '../../services/presentation/services_tab.dart';
 import '../../transmissions/data/handover_service.dart';
 import '../../transmissions/domain/handover.dart';
@@ -41,11 +44,17 @@ class _DashboardPageState extends State<DashboardPage> {
   List<Shift> _shifts = const [];
   List<Handover> _handovers = const [];
 
+  List<HospitalService> get _managedServices =>
+      _user.role == StaffRole.serviceHead
+      ? _services.where((service) => service.headUserId == _user.id).toList()
+      : _services;
+
   static const _titles = [
     'Mon espace',
     'Mon planning',
     'Mon service',
     'Transmissions',
+    'Hôpital',
     'Administration',
   ];
 
@@ -78,9 +87,24 @@ class _DashboardPageState extends State<DashboardPage> {
       final shifts = await ShiftService().list(
         userId: isAdmin ? null : user.id,
       );
-      final handovers = await HandoverService().list(
-        serviceId: isAdmin ? null : user.serviceId,
-      );
+      String? serviceHeadServiceId;
+      if (user.role == StaffRole.serviceHead) {
+        for (final service in services) {
+          if (service.headUserId == user.id) {
+            serviceHeadServiceId = service.id;
+            break;
+          }
+        }
+      }
+      final handoverServiceId = isAdmin
+          ? null
+          : user.serviceId ?? serviceHeadServiceId;
+      final handovers =
+          (user.role == StaffRole.serviceHead ||
+              user.role == StaffRole.secretary) &&
+              handoverServiceId == null
+          ? <Handover>[]
+          : await HandoverService().list(serviceId: handoverServiceId);
       final users = isAdmin ? await UserService().list() : const <StaffUser>[];
       if (!mounted) return;
       setState(() {
@@ -120,13 +144,20 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _addHandover() async {
-    if (_services.isEmpty) {
-      _showError(const ApiException('Ajoutez d’abord un service.'));
+    final availableServices = _managedServices;
+    if (availableServices.isEmpty) {
+      _showError(
+        ApiException(
+          _user.role == StaffRole.serviceHead
+              ? 'Aucun service ne vous est attribué.'
+              : 'Ajoutez d’abord un service.',
+        ),
+      );
       return;
     }
     final draft = await showDialog<Handover>(
       context: context,
-      builder: (_) => NewHandoverDialog(services: _services),
+      builder: (_) => NewHandoverDialog(services: availableServices),
     );
     if (draft == null || !mounted) return;
     try {
@@ -162,7 +193,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _addService() async {
     final draft = await showDialog<HospitalService>(
       context: context,
-      builder: (_) => const NewServiceDialog(),
+      builder: (_) => ServiceFormDialog(users: _users),
     );
     if (draft == null || !mounted) return;
     try {
@@ -176,11 +207,20 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _editService(HospitalService service) async {
     final edited = await showDialog<HospitalService>(
       context: context,
-      builder: (_) => NewServiceDialog(service: service),
+      builder: (_) => ServiceFormDialog(service: service, users: _users),
     );
     if (edited == null || !mounted) return;
     try {
       await ServiceService().update(edited);
+      await _load();
+    } on ApiException catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _toggleServiceActive(HospitalService service) async {
+    try {
+      await ServiceService().toggleActive(service);
       await _load();
     } on ApiException catch (error) {
       _showError(error);
@@ -256,6 +296,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
     final isPatient = _user.role == StaffRole.patient;
     final isAdmin = _user.role == StaffRole.administrator;
     final nextShift =
@@ -276,10 +317,19 @@ class _DashboardPageState extends State<DashboardPage> {
               services: _services,
               canEdit: isAdmin,
               onEdit: _editService,
+              onToggleActive: _toggleServiceActive,
+              onAdd: _addService,
             ),
             HandoversTab(
               handovers: _handovers,
               onHandoverTap: _showHandoverDetails,
+            ),
+            HospitalTab(
+              canManage: isAdmin,
+              isVisible: _selectedIndex == 4,
+              hospitalsApi: HospitalResourceService(),
+              services: _services,
+              users: _users,
             ),
             if (isAdmin)
               AdminTab(
@@ -325,6 +375,11 @@ class _DashboardPageState extends State<DashboardPage> {
               selectedIcon: Icon(Icons.forum_rounded),
               label: 'Transmissions',
             ),
+            const NavigationDestination(
+              icon: Icon(Icons.apartment_outlined),
+              selectedIcon: Icon(Icons.apartment),
+              label: 'Hôpital',
+            ),
             if (isAdmin)
               const NavigationDestination(
                 icon: Icon(Icons.admin_panel_settings_outlined),
@@ -335,25 +390,49 @@ class _DashboardPageState extends State<DashboardPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          isPatient
-              ? (_selectedIndex == 0 ? 'Espace patient' : 'Mon profil')
-              : _titles[_selectedIndex],
-        ),
+        title: screenWidth < 220
+            ? null
+            : Text(
+                isPatient
+                    ? (_selectedIndex == 0 ? 'Espace patient' : 'Mon profil')
+                    : _titles[_selectedIndex],
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
         foregroundColor: AppColors.navy,
         backgroundColor: AppColors.background,
         actions: [
-          if (!isPatient)
+          if (!isPatient && screenWidth >= 360)
             IconButton(
               tooltip: 'Actualiser',
               onPressed: _isLoading ? null : _load,
               icon: const Icon(Icons.refresh),
             ),
-          IconButton(
-            tooltip: 'Se déconnecter',
-            onPressed: _signOut,
-            icon: const Icon(Icons.logout_rounded),
-          ),
+          if (screenWidth >= 360)
+            IconButton(
+              tooltip: 'Se déconnecter',
+              onPressed: _signOut,
+              icon: const Icon(Icons.logout_rounded),
+            )
+          else if (screenWidth >= 220)
+            PopupMenuButton<String>(
+              tooltip: 'Actions',
+              onSelected: (action) {
+                if (action == 'refresh') _load();
+                if (action == 'logout') _signOut();
+              },
+              itemBuilder: (_) => [
+                if (!isPatient)
+                  const PopupMenuItem(
+                    value: 'refresh',
+                    child: Text('Actualiser'),
+                  ),
+                const PopupMenuItem(
+                  value: 'logout',
+                  child: Text('Se déconnecter'),
+                ),
+              ],
+            ),
         ],
       ),
       body: _isLoading
@@ -377,7 +456,10 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
             )
           : IndexedStack(index: _selectedIndex, children: pages),
-      floatingActionButton: !isPatient && _selectedIndex == 3
+      floatingActionButton:
+          !isPatient &&
+              _user.role != StaffRole.secretary &&
+              _selectedIndex == 3
           ? FloatingActionButton.extended(
               onPressed: _addHandover,
               backgroundColor: AppColors.blue,
@@ -396,6 +478,9 @@ class _DashboardPageState extends State<DashboardPage> {
           : null,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
+        labelBehavior: destinations.length > 5
+            ? NavigationDestinationLabelBehavior.onlyShowSelected
+            : NavigationDestinationLabelBehavior.alwaysShow,
         onDestinationSelected: (index) =>
             setState(() => _selectedIndex = index),
         destinations: destinations,

@@ -27,6 +27,7 @@ class SessionManager {
         'username': user.displayName,
         'email': user.email,
         'role': user.role.apiValue,
+        'roles': user.assignedRoles.map((role) => role.apiValue).toList(),
         'serviceId': user.serviceId,
         'active': user.isActive,
       }),

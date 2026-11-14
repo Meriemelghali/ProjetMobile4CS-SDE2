@@ -9,7 +9,9 @@ class UserService {
   Future<List<StaffUser>> list() async {
     final response = await _api.get('/users');
     final values = response['users'];
-    if (values is! List) throw const ApiException('Liste des comptes invalide.');
+    if (values is! List) {
+      throw const ApiException('Liste des comptes invalide.');
+    }
     return values
         .map((item) => StaffUser.fromJson(item as Map<String, dynamic>))
         .toList();
@@ -19,7 +21,7 @@ class UserService {
     required String username,
     required String email,
     required String password,
-    required String role,
+    required List<String> roles,
   }) async {
     final response = await _api.post(
       '/users',
@@ -27,7 +29,7 @@ class UserService {
         'username': username,
         'email': email,
         'password': password,
-        'role': role,
+        'roles': roles,
       },
     );
     return StaffUser.fromJson(response['user'] as Map<String, dynamic>);

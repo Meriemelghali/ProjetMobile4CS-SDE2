@@ -57,6 +57,15 @@ class ApiClient {
     );
   }
 
+  Future<Map<String, dynamic>> delete(String path) {
+    return _send(
+      () => _client.delete(
+        Uri.parse('${ApiConfig.baseUrl}$path'),
+        headers: _headers(),
+      ),
+    );
+  }
+
   Map<String, String> _headers() {
     final headers = <String, String>{'Content-Type': 'application/json'};
     final token = SessionManager.instance.token;

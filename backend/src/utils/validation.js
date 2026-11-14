@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const { HttpError } = require('../errors');
 
-const ROLES = ['admin', 'doctor', 'nurse', 'patient'];
+const ROLES = ['admin', 'doctor', 'nurse', 'secretary', 'service_head', 'patient'];
 
 function requireObject(value, label = 'Request body') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -41,6 +41,24 @@ function requireRole(value) {
     throw new HttpError(400, `role must be one of: ${ROLES.join(', ')}.`);
   }
   return value;
+}
+
+function requireRoles(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new HttpError(400, 'roles must be a non-empty array.');
+  }
+  const roles = value.map(requireRole);
+  if (new Set(roles).size !== roles.length) {
+    throw new HttpError(400, 'roles must not contain duplicates.');
+  }
+  return roles;
+}
+
+function getUserRoles(user) {
+  const roles = Array.isArray(user.roles) && user.roles.length
+    ? user.roles
+    : [user.role];
+  return [...new Set(roles.filter((role) => ROLES.includes(role)))];
 }
 
 function requireBoolean(value, field) {
@@ -90,6 +108,8 @@ module.exports = {
   requireEmail,
   requirePassword,
   requireRole,
+  requireRoles,
+  getUserRoles,
   requireBoolean,
   requireId,
   requireDate,
