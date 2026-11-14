@@ -5,7 +5,9 @@
 // =============================================================================
 
 const Service = require('../models/Service');
+const User = require('../models/User');
 const { HttpError } = require('../errors');
+const { getUserRoles } = require('../utils/validation');
 const {
   requireBoolean,
   requireId,
@@ -21,7 +23,7 @@ const FIELDS = [
   'name', 'description', 'location', 'active',
   // Nouveaux champs optionnels
   'serviceType', 'building', 'floor', 'capacity',
-  'phone', 'email', 'headName', 'openingHours', 'notes',
+  'phone', 'email', 'headName', 'headUserId', 'openingHours', 'notes',
 ];
 
 // Sérialise un document Mongoose en objet JSON renvoyé au client
@@ -40,6 +42,7 @@ function serviceResponse(service) {
     phone:        service.phone        ?? '',
     email:        service.email        ?? '',
     headName:     service.headName     ?? '',
+    headUserId:   service.headUserId?._id || service.headUserId || null,
     openingHours: service.openingHours ?? '',
     notes:        service.notes        ?? '',
   };
@@ -48,7 +51,7 @@ function serviceResponse(service) {
 // Extrait et valide les champs du body de la requête
 // creating=true : tous les champs obligatoires sont requis
 // creating=false : seuls les champs présents dans le body sont traités
-function parseFields(body, creating = false) {
+async function parseFields(body, creating = false) {
   const fields = {};
 
   // --- Champs existants ---
@@ -93,6 +96,21 @@ function parseFields(body, creating = false) {
   if (body.headName !== undefined)
     fields.headName = requireString(body.headName, 'headName', { max: 120, min: 0 });
 
+  if (body.headUserId !== undefined) {
+    if (body.headUserId === null || body.headUserId === '') {
+      fields.headUserId = null;
+      fields.headName = '';
+    } else {
+      const id = requireId(body.headUserId, 'headUserId');
+      const head = await User.findById(id).select('username role roles active');
+      if (!head || !getUserRoles(head).includes('service_head') || !head.active) {
+        throw new HttpError(400, 'headUserId must reference an active service head.');
+      }
+      fields.headUserId = head._id;
+      fields.headName = head.username;
+    }
+  }
+
   if (body.openingHours !== undefined)
     fields.openingHours = requireString(body.openingHours, 'openingHours', { max: 200, min: 0 });
 
@@ -112,7 +130,7 @@ async function list(_req, res) {
 async function create(req, res) {
   const body = requireObject(req.body);
   rejectUnknownFields(body, FIELDS);
-  const service = await Service.create(parseFields(body, true));
+  const service = await Service.create(await parseFields(body, true));
   return res.status(201).json({ service: serviceResponse(service) });
 }
 
@@ -121,7 +139,7 @@ async function update(req, res) {
   const id = requireId(req.params.id, 'service id');
   const body = requireObject(req.body);
   rejectUnknownFields(body, FIELDS);
-  const fields = parseFields(body);
+  const fields = await parseFields(body);
   if (!Object.keys(fields).length)
     throw new HttpError(400, 'At least one field must be provided.');
   const service = await Service.findByIdAndUpdate(

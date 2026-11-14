@@ -9,29 +9,49 @@
 /// Enum des types de services hospitaliers.
 /// Permet le filtre par catégorie dans la liste.
 enum ServiceType {
-  medecine('Médecine'),
-  chirurgie('Chirurgie'),
-  urgences('Urgences'),
-  pediatrie('Pédiatrie'),
-  gynecologie('Gynécologie'),
-  radiologie('Radiologie'),
-  laboratoire('Laboratoire'),
-  reanimation('Réanimation'),
-  psychiatrie('Psychiatrie'),
-  autre('Autre');
+  medical('Médical', 'medical'),
+  surgical('Chirurgical', 'surgical'),
+  emergency('Urgence', 'emergency'),
+  intensiveCare('Soins intensifs', 'intensive_care'),
+  maternity('Maternité', 'maternity'),
+  medicoTechnical('Médico-technique', 'medico_technical'),
+  administrative('Administratif', 'administrative'),
+  other('Autre', 'other');
 
-  const ServiceType(this.label); // Libellé affiché dans l'UI
+  const ServiceType(this.label, this.apiValue);
 
-  /// Libellé lisible par l'utilisateur.
   final String label;
+  final String apiValue;
 
-  /// Convertit une chaîne API en [ServiceType].
-  /// Retourne [ServiceType.autre] si la valeur est inconnue.
+  /// Accepte également les anciennes catégories déjà stockées dans MongoDB.
   static ServiceType fromString(String value) {
-    return ServiceType.values.firstWhere(
-      (t) => t.name == value || t.label == value,
-      orElse: () => ServiceType.autre, // Valeur par défaut sûre
-    );
+    final normalized = value.trim().toLowerCase();
+    for (final type in ServiceType.values) {
+      if (type.apiValue == normalized ||
+          type.name == normalized ||
+          type.label.toLowerCase() == normalized) {
+        return type;
+      }
+    }
+
+    return switch (normalized) {
+      'medecine' ||
+      'médecine' ||
+      'medicine' ||
+      'medicale' => ServiceType.medical,
+      'chirurgie' || 'surgery' => ServiceType.surgical,
+      'urgences' || 'urgence' || 'emergency' => ServiceType.emergency,
+      'reanimation' ||
+      'réanimation' ||
+      'intensivecare' => ServiceType.intensiveCare,
+      'gynecologie' || 'gynécologie' || 'obstetrics' => ServiceType.maternity,
+      'radiologie' ||
+      'laboratoire' ||
+      'psychiatrie' ||
+      'medico-technique' => ServiceType.medicoTechnical,
+      'administratif' => ServiceType.administrative,
+      _ => ServiceType.other,
+    };
   }
 }
 
@@ -46,21 +66,22 @@ class HospitalService {
   /// Crée un [HospitalService] avec tous ses champs.
   /// Seuls [id], [name], [location] et [description] sont requis.
   const HospitalService({
-    required this.id,            // Identifiant MongoDB ('' si nouveau)
-    required this.name,          // Nom du service (obligatoire)
-    required this.location,      // Emplacement complet
-    required this.description,   // Description des activités
-    this.isActive = true,        // Actif par défaut
+    required this.id, // Identifiant MongoDB ('' si nouveau)
+    required this.name, // Nom du service (obligatoire)
+    required this.location, // Emplacement complet
+    required this.description, // Description des activités
+    this.isActive = true, // Actif par défaut
     // Nouveaux champs — tous optionnels avec valeur par défaut
-    this.serviceType = ServiceType.autre, // Type de service
-    this.building = '',          // Bâtiment
-    this.floor = '',             // Étage
-    this.capacity = 0,           // Nombre de lits/places (0 = non renseigné)
-    this.phone = '',             // Téléphone interne
-    this.email = '',             // Email du service
-    this.headName = '',          // Nom du chef de service
-    this.openingHours = '',      // Horaires d'ouverture
-    this.notes = '',             // Notes internes
+    this.serviceType = ServiceType.other, // Type de service
+    this.building = '', // Bâtiment
+    this.floor = '', // Étage
+    this.capacity = 0, // Nombre de lits/places (0 = non renseigné)
+    this.phone = '', // Téléphone interne
+    this.email = '', // Email du service
+    this.headName = '', // Nom du chef de service
+    this.headUserId, // Compte utilisateur du chef de service
+    this.openingHours = '', // Horaires d'ouverture
+    this.notes = '', // Notes internes
   });
 
   // --------------------------------------------------------------------------
@@ -107,6 +128,8 @@ class HospitalService {
   /// Nom et prénom du chef ou responsable du service.
   final String headName;
 
+  final String? headUserId;
+
   /// Horaires d'ouverture au format libre (ex : "Lun–Ven 08h–18h").
   final String openingHours;
 
@@ -126,21 +149,22 @@ class HospitalService {
       id: (json['_id'] ?? json['id']).toString(),
 
       // Champs existants avec valeurs par défaut sécurisées
-      name:        json['name']        as String? ?? '',
-      location:    json['location']    as String? ?? '',
+      name: json['name'] as String? ?? '',
+      location: json['location'] as String? ?? '',
       description: json['description'] as String? ?? '',
-      isActive:    json['active']      as bool?   ?? true,
+      isActive: json['active'] as bool? ?? true,
 
       // Nouveaux champs — ?? pour les anciens documents sans ces champs
-      serviceType:  ServiceType.fromString(json['serviceType'] as String? ?? ''),
-      building:     json['building']     as String? ?? '',
-      floor:        json['floor']        as String? ?? '',
-      capacity:     (json['capacity']    as num?   ?? 0).toInt(),
-      phone:        json['phone']        as String? ?? '',
-      email:        json['email']        as String? ?? '',
-      headName:     json['headName']     as String? ?? '',
+      serviceType: ServiceType.fromString(json['serviceType'] as String? ?? ''),
+      building: json['building'] as String? ?? '',
+      floor: json['floor'] as String? ?? '',
+      capacity: (json['capacity'] as num? ?? 0).toInt(),
+      phone: json['phone'] as String? ?? '',
+      email: json['email'] as String? ?? '',
+      headName: json['headName'] as String? ?? '',
+      headUserId: json['headUserId']?.toString(),
       openingHours: json['openingHours'] as String? ?? '',
-      notes:        json['notes']        as String? ?? '',
+      notes: json['notes'] as String? ?? '',
     );
   }
 
@@ -151,21 +175,22 @@ class HospitalService {
   /// Convertit en Map JSON pour POST/PUT vers le backend.
   /// N'inclut pas 'id' (géré par MongoDB).
   Map<String, Object?> toJson() => {
-        'name':         name,
-        'location':     location,
-        'description':  description,
-        'active':       isActive,
-        // Nouveaux champs — envoyés au backend étendu
-        'serviceType':  serviceType == ServiceType.autre ? '' : serviceType.name,
-        'building':     building,
-        'floor':        floor,
-        'capacity':     capacity,
-        'phone':        phone,
-        'email':        email,
-        'headName':     headName,
-        'openingHours': openingHours,
-        'notes':        notes,
-      };
+    'name': name,
+    'location': location,
+    'description': description,
+    'active': isActive,
+    // Nouveaux champs — envoyés au backend étendu
+    'serviceType': serviceType.apiValue,
+    'building': building,
+    'floor': floor,
+    'capacity': capacity,
+    'phone': phone,
+    'email': email,
+    'headName': headName,
+    'headUserId': headUserId,
+    'openingHours': openingHours,
+    'notes': notes,
+  };
 
   // --------------------------------------------------------------------------
   // copyWith — pattern immuable
@@ -185,24 +210,26 @@ class HospitalService {
     String? phone,
     String? email,
     String? headName,
+    String? headUserId,
     String? openingHours,
     String? notes,
   }) {
     return HospitalService(
-      id:           id           ?? this.id,
-      name:         name         ?? this.name,
-      location:     location     ?? this.location,
-      description:  description  ?? this.description,
-      isActive:     isActive     ?? this.isActive,
-      serviceType:  serviceType  ?? this.serviceType,
-      building:     building     ?? this.building,
-      floor:        floor        ?? this.floor,
-      capacity:     capacity     ?? this.capacity,
-      phone:        phone        ?? this.phone,
-      email:        email        ?? this.email,
-      headName:     headName     ?? this.headName,
+      id: id ?? this.id,
+      name: name ?? this.name,
+      location: location ?? this.location,
+      description: description ?? this.description,
+      isActive: isActive ?? this.isActive,
+      serviceType: serviceType ?? this.serviceType,
+      building: building ?? this.building,
+      floor: floor ?? this.floor,
+      capacity: capacity ?? this.capacity,
+      phone: phone ?? this.phone,
+      email: email ?? this.email,
+      headName: headName ?? this.headName,
+      headUserId: headUserId ?? this.headUserId,
       openingHours: openingHours ?? this.openingHours,
-      notes:        notes        ?? this.notes,
+      notes: notes ?? this.notes,
     );
   }
 

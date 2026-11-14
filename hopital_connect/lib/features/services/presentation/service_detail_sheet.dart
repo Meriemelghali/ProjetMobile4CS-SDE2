@@ -10,21 +10,19 @@ import 'package:flutter/services.dart'; // Clipboard
 
 import '../../../core/theme/app_colors.dart';
 import '../domain/hospital_service.dart';
-import '../utils/service_actions.dart';  // Google Maps, appel, email, partage
-import 'service_qr_dialog.dart';        // Dialog QR code
+import '../utils/service_actions.dart'; // Google Maps, appel, email, partage
+import 'service_qr_dialog.dart'; // Dialog QR code
 
 /// Palette de couleurs par type de service.
 const Map<ServiceType, Color> _typeColors = {
-  ServiceType.medecine:    Color(0xFF176B87),
-  ServiceType.chirurgie:   Color(0xFF8B45A0),
-  ServiceType.urgences:    Color(0xFFD64045),
-  ServiceType.pediatrie:   Color(0xFF36A98B),
-  ServiceType.gynecologie: Color(0xFFE0689A),
-  ServiceType.radiologie:  Color(0xFF5B6BBF),
-  ServiceType.laboratoire: Color(0xFFE8891A),
-  ServiceType.reanimation: Color(0xFFC0392B),
-  ServiceType.psychiatrie: Color(0xFF2E7D32),
-  ServiceType.autre:       Color(0xFF607D8B),
+  ServiceType.medical: Color(0xFF176B87),
+  ServiceType.surgical: Color(0xFF8B45A0),
+  ServiceType.emergency: Color(0xFFD64045),
+  ServiceType.intensiveCare: Color(0xFFC0392B),
+  ServiceType.maternity: Color(0xFFE0689A),
+  ServiceType.medicoTechnical: Color(0xFF5B6BBF),
+  ServiceType.administrative: Color(0xFFE8891A),
+  ServiceType.other: Color(0xFF607D8B),
 };
 
 /// Bottom sheet de détail complet d'un service hospitalier.
@@ -32,10 +30,10 @@ const Map<ServiceType, Color> _typeColors = {
 class ServiceDetailSheet extends StatelessWidget {
   const ServiceDetailSheet({
     super.key,
-    required this.service,   // Service à afficher
-    this.canEdit = false,    // true = affiche les boutons admin
-    this.onEdit,             // Callback pour modifier le service
-    this.onToggleActive,     // Callback pour activer/désactiver
+    required this.service, // Service à afficher
+    this.canEdit = false, // true = affiche les boutons admin
+    this.onEdit, // Callback pour modifier le service
+    this.onToggleActive, // Callback pour activer/désactiver
   });
 
   final HospitalService service;
@@ -45,8 +43,9 @@ class ServiceDetailSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isActive  = service.isActive;
-    final typeColor = _typeColors[service.serviceType] ?? const Color(0xFF607D8B);
+    final isActive = service.isActive;
+    final typeColor =
+        _typeColors[service.serviceType] ?? const Color(0xFF607D8B);
 
     return Container(
       margin: const EdgeInsets.only(top: 60),
@@ -62,7 +61,8 @@ class ServiceDetailSheet extends StatelessWidget {
             Center(
               child: Container(
                 margin: const EdgeInsets.only(top: 12, bottom: 4),
-                width: 40, height: 4,
+                width: 40,
+                height: 4,
                 decoration: BoxDecoration(
                   color: const Color(0xFFD6E0E5),
                   borderRadius: BorderRadius.circular(2),
@@ -76,7 +76,6 @@ class ServiceDetailSheet extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-
                     // --------------------------------------------------------
                     // En-tête : icône + nom + type + badge statut
                     // --------------------------------------------------------
@@ -141,7 +140,8 @@ class ServiceDetailSheet extends StatelessWidget {
                         _MapsRow(
                           value: service.location,
                           color: typeColor,
-                          onTap: () => ServiceActions.openMaps(context, service),
+                          onTap: () =>
+                              ServiceActions.openMaps(context, service),
                         ),
                       ],
                       const SizedBox(height: 20),
@@ -168,7 +168,8 @@ class ServiceDetailSheet extends StatelessWidget {
                         _PhoneRow(
                           value: service.phone,
                           color: typeColor,
-                          onCall: () => ServiceActions.callService(context, service),
+                          onCall: () =>
+                              ServiceActions.callService(context, service),
                           context: context,
                         ),
                       ],
@@ -178,7 +179,8 @@ class ServiceDetailSheet extends StatelessWidget {
                         _EmailRow(
                           value: service.email,
                           color: typeColor,
-                          onEmail: () => ServiceActions.emailService(context, service),
+                          onEmail: () =>
+                              ServiceActions.emailService(context, service),
                           context: context,
                         ),
                       ],
@@ -188,7 +190,8 @@ class ServiceDetailSheet extends StatelessWidget {
                     // --------------------------------------------------------
                     // Infos pratiques
                     // --------------------------------------------------------
-                    if (service.capacity > 0 || service.openingHours.isNotEmpty) ...[
+                    if (service.capacity > 0 ||
+                        service.openingHours.isNotEmpty) ...[
                       const _SectionLabel(label: 'Infos pratiques'),
                       const SizedBox(height: 10),
                       if (service.capacity > 0)
@@ -227,8 +230,11 @@ class ServiceDetailSheet extends StatelessWidget {
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Icon(Icons.sticky_note_2_outlined,
-                                color: Color(0xFFE8891A), size: 18),
+                            const Icon(
+                              Icons.sticky_note_2_outlined,
+                              color: Color(0xFFE8891A),
+                              size: 18,
+                            ),
                             const SizedBox(width: 10),
                             Expanded(
                               child: Text(
@@ -257,7 +263,9 @@ class ServiceDetailSheet extends StatelessWidget {
                       value: isActive
                           ? 'Actif – visible par le personnel'
                           : 'Inactif – masqué au personnel',
-                      color: isActive ? AppColors.mint : const Color(0xFF8797A0),
+                      color: isActive
+                          ? AppColors.mint
+                          : const Color(0xFF8797A0),
                     ),
 
                     // --------------------------------------------------------
@@ -277,7 +285,8 @@ class ServiceDetailSheet extends StatelessWidget {
                             backgroundColor: AppColors.blue,
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
                           ),
                         ),
                       ),
@@ -286,12 +295,16 @@ class ServiceDetailSheet extends StatelessWidget {
                         width: double.infinity,
                         child: OutlinedButton.icon(
                           onPressed: onToggleActive,
-                          icon: Icon(isActive
-                              ? Icons.toggle_off_outlined
-                              : Icons.toggle_on_outlined),
-                          label: Text(isActive
-                              ? 'Désactiver ce service'
-                              : 'Réactiver ce service'),
+                          icon: Icon(
+                            isActive
+                                ? Icons.toggle_off_outlined
+                                : Icons.toggle_on_outlined,
+                          ),
+                          label: Text(
+                            isActive
+                                ? 'Désactiver ce service'
+                                : 'Réactiver ce service',
+                          ),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: isActive
                                 ? const Color(0xFFD64045)
@@ -303,7 +316,8 @@ class ServiceDetailSheet extends StatelessWidget {
                             ),
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
                           ),
                         ),
                       ),
@@ -327,16 +341,19 @@ class ServiceDetailSheet extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          width: 56, height: 56,
+          width: 56,
+          height: 56,
           decoration: BoxDecoration(
             color: isActive
                 ? typeColor.withValues(alpha: 0.12)
                 : const Color(0xFFEEF2F4),
             borderRadius: BorderRadius.circular(16),
           ),
-          child: Icon(Icons.medical_services_outlined,
-              size: 28,
-              color: isActive ? typeColor : const Color(0xFF9AA9B0)),
+          child: Icon(
+            Icons.medical_services_outlined,
+            size: 28,
+            color: isActive ? typeColor : const Color(0xFF9AA9B0),
+          ),
         ),
         const SizedBox(width: 16),
         Expanded(
@@ -358,7 +375,9 @@ class ServiceDetailSheet extends StatelessWidget {
                   // Badge type de service
                   Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 2),
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: typeColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(20),
@@ -366,16 +385,19 @@ class ServiceDetailSheet extends StatelessWidget {
                     child: Text(
                       service.serviceType.label,
                       style: TextStyle(
-                          color: typeColor,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600),
+                        color: typeColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
                   // Badge actif/inactif
                   Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 2),
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: isActive
                           ? const Color(0xFFE6F7F3)
@@ -469,11 +491,11 @@ class ServiceDetailSheet extends StatelessWidget {
 
 class _ActionButton extends StatelessWidget {
   const _ActionButton({
-    required this.icon,    // Icône Material
-    required this.label,   // Label sous l'icône
-    required this.color,   // Couleur thématique
+    required this.icon, // Icône Material
+    required this.label, // Label sous l'icône
+    required this.color, // Couleur thématique
     required this.enabled, // false = grisé et non cliquable
-    required this.onTap,   // Callback au tap
+    required this.onTap, // Callback au tap
   });
 
   final IconData icon;
@@ -493,7 +515,8 @@ class _ActionButton extends StatelessWidget {
           children: [
             // Cercle coloré contenant l'icône
             Container(
-              width: 52, height: 52,
+              width: 52,
+              height: 52,
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.12), // Fond teinté
                 shape: BoxShape.circle,
@@ -539,7 +562,8 @@ class _MapsRow extends StatelessWidget {
       children: [
         // Icône pin dans container coloré
         Container(
-          width: 38, height: 38,
+          width: 38,
+          height: 38,
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(10),
@@ -551,12 +575,19 @@ class _MapsRow extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Emplacement',
-                  style: TextStyle(color: Color(0xFF8797A0), fontSize: 12)),
+              const Text(
+                'Emplacement',
+                style: TextStyle(color: Color(0xFF8797A0), fontSize: 12),
+              ),
               const SizedBox(height: 2),
-              Text(value,
-                  style: const TextStyle(
-                      color: AppColors.navy, fontSize: 15, height: 1.4)),
+              Text(
+                value,
+                style: const TextStyle(
+                  color: AppColors.navy,
+                  fontSize: 15,
+                  height: 1.4,
+                ),
+              ),
             ],
           ),
         ),
@@ -600,7 +631,8 @@ class _PhoneRow extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          width: 38, height: 38,
+          width: 38,
+          height: 38,
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(10),
@@ -612,12 +644,19 @@ class _PhoneRow extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Téléphone / Poste',
-                  style: TextStyle(color: Color(0xFF8797A0), fontSize: 12)),
+              const Text(
+                'Téléphone / Poste',
+                style: TextStyle(color: Color(0xFF8797A0), fontSize: 12),
+              ),
               const SizedBox(height: 2),
-              Text(value,
-                  style: const TextStyle(
-                      color: AppColors.navy, fontSize: 15, height: 1.4)),
+              Text(
+                value,
+                style: const TextStyle(
+                  color: AppColors.navy,
+                  fontSize: 15,
+                  height: 1.4,
+                ),
+              ),
             ],
           ),
         ),
@@ -635,7 +674,8 @@ class _PhoneRow extends StatelessWidget {
                 behavior: SnackBarBehavior.floating,
                 duration: const Duration(seconds: 2),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             );
           },
@@ -676,7 +716,8 @@ class _EmailRow extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          width: 38, height: 38,
+          width: 38,
+          height: 38,
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(10),
@@ -688,12 +729,19 @@ class _EmailRow extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Email',
-                  style: TextStyle(color: Color(0xFF8797A0), fontSize: 12)),
+              const Text(
+                'Email',
+                style: TextStyle(color: Color(0xFF8797A0), fontSize: 12),
+              ),
               const SizedBox(height: 2),
-              Text(value,
-                  style: const TextStyle(
-                      color: AppColors.navy, fontSize: 15, height: 1.4)),
+              Text(
+                value,
+                style: const TextStyle(
+                  color: AppColors.navy,
+                  fontSize: 15,
+                  height: 1.4,
+                ),
+              ),
             ],
           ),
         ),
@@ -711,7 +759,8 @@ class _EmailRow extends StatelessWidget {
                 behavior: SnackBarBehavior.floating,
                 duration: const Duration(seconds: 2),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             );
           },
@@ -771,7 +820,8 @@ class _DetailRow extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          width: 38, height: 38,
+          width: 38,
+          height: 38,
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(10),
@@ -783,13 +833,19 @@ class _DetailRow extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label,
-                  style: const TextStyle(
-                      color: Color(0xFF8797A0), fontSize: 12)),
+              Text(
+                label,
+                style: const TextStyle(color: Color(0xFF8797A0), fontSize: 12),
+              ),
               const SizedBox(height: 2),
-              Text(value,
-                  style: const TextStyle(
-                      color: AppColors.navy, fontSize: 15, height: 1.4)),
+              Text(
+                value,
+                style: const TextStyle(
+                  color: AppColors.navy,
+                  fontSize: 15,
+                  height: 1.4,
+                ),
+              ),
             ],
           ),
         ),

@@ -38,6 +38,7 @@ const serviceSchema = new mongoose.Schema(
 
     // Nom du responsable / chef de service
     headName:     { type: String, default: '', trim: true, maxlength: 120 },
+    headUserId:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 
     // Horaires d'ouverture (ex : "Lun–Ven 08h00–18h00 / Urgences 24h/24")
     openingHours: { type: String, default: '', trim: true, maxlength: 200 },

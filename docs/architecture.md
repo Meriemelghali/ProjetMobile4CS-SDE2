@@ -30,6 +30,9 @@ lib/
     ├── services/domain/             # Modèle Service
     ├── services/data/               # Requêtes des services
     ├── services/presentation/
+    ├── hospital/domain/             # Hôpital, chambres, lits, blocs et matériel
+    ├── hospital/data/               # Requêtes des ressources hospitalières
+    ├── hospital/presentation/
     ├── planning/domain/              # Gardes avec dates réelles
     ├── planning/data/
     ├── planning/presentation/
@@ -41,8 +44,9 @@ lib/
 La configuration de l’API se fait avec `--dart-define=API_BASE_URL=...`.
 L’adresse par défaut, `http://10.0.2.2:3000`, convient à l’émulateur Android.
 La session JWT est enregistrée avec `shared_preferences` et chaque requête
-protégée envoie le token comme bearer token. Les droits ne sont pas déduits
-du formulaire : l’API contrôle le rôle côté serveur.
+protégée envoie le token comme bearer token. Si un compte possède plusieurs
+rôles, l’utilisateur en choisit un après la connexion ; le token et l’API
+appliquent les droits de ce rôle pour la session.
 
 ## Backend
 
@@ -62,6 +66,8 @@ de création du premier administrateur, les routes et leurs rôles.
 - Vérifier l’authentification et les rôles dans les middlewares du backend,
   même si une action ou un onglet est masqué dans Flutter.
 
-Les modules `hospital`, `appointments`, `medical_records` et `pharmacy` restent
-hors du MVP. Ne stockez ni n’envoyez de données médicales réelles dans cette
-application de démonstration.
+Le module hospitalier couvre la structure de l'établissement, les chambres,
+les lits, les blocs opératoires, les interventions et le matériel. Les
+modules `appointments`, `medical_records` et `pharmacy` restent hors du MVP.
+Ne stockez ni n'envoyez de données médicales réelles dans cette application de
+démonstration.
