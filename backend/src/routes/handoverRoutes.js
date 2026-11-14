@@ -7,5 +7,6 @@ const router = express.Router();
 router.use(authenticate);
 router.get('/', authorize('admin', 'doctor', 'nurse'), controller.list);
 router.post('/', authorize('admin', 'doctor', 'nurse'), controller.create);
+router.post('/:id/read', authorize('admin', 'doctor', 'nurse'), controller.markRead);
 
 module.exports = router;

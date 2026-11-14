@@ -26,6 +26,7 @@ class SessionManager {
         'id': user.id,
         'username': user.displayName,
         'email': user.email,
+        ...user.toProfileJson(),
         'role': user.role.apiValue,
         'serviceId': user.serviceId,
         'active': user.isActive,

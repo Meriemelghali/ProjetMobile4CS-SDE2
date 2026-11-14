@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../services/data/service_service.dart';
+import '../../services/domain/hospital_service.dart';
 import '../data/user_service.dart';
 import '../domain/staff_role.dart';
 import '../domain/staff_user.dart';
@@ -17,6 +19,7 @@ class UserManagementPage extends StatefulWidget {
 
 class _UserManagementPageState extends State<UserManagementPage> {
   List<StaffUser> _users = const [];
+  List<HospitalService> _services = const [];
   bool _isLoading = true;
   String? _error;
 
@@ -32,8 +35,16 @@ class _UserManagementPageState extends State<UserManagementPage> {
       _error = null;
     });
     try {
-      final users = await widget.service.list();
-      if (mounted) setState(() => _users = users);
+      final results = await Future.wait([
+        widget.service.list(),
+        ServiceService().list(),
+      ]);
+      if (mounted) {
+        setState(() {
+          _users = results[0] as List<StaffUser>;
+          _services = results[1] as List<HospitalService>;
+        });
+      }
     } on ApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } finally {
@@ -44,7 +55,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
   Future<void> _createUser() async {
     final input = await showDialog<_NewUserInput>(
       context: context,
-      builder: (_) => const _UserDialog(),
+      builder: (_) => _UserDialog(services: _services),
     );
     if (input == null || !mounted) return;
     try {
@@ -53,6 +64,10 @@ class _UserManagementPageState extends State<UserManagementPage> {
         email: input.email,
         password: input.password!,
         role: input.role.apiValue,
+        serviceId: input.serviceId,
+        serviceIds: input.serviceIds,
+        specialty: input.specialty,
+        photoUrl: input.photoUrl,
       );
       if (mounted) setState(() => _users = [..._users, user]);
     } on ApiException catch (error) {
@@ -63,7 +78,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
   Future<void> _editUser(StaffUser user) async {
     final edited = await showDialog<StaffUser>(
       context: context,
-      builder: (_) => _UserDialog(user: user),
+      builder: (_) => _UserDialog(user: user, services: _services),
     );
     if (edited == null || !mounted) return;
     try {
@@ -88,6 +103,9 @@ class _UserManagementPageState extends State<UserManagementPage> {
       email: user.email,
       role: user.role,
       serviceId: user.serviceId,
+      serviceIds: user.serviceIds,
+      specialty: user.specialty,
+      photoUrl: user.photoUrl,
       isActive: !user.isActive,
     );
     try {
@@ -106,9 +124,8 @@ class _UserManagementPageState extends State<UserManagementPage> {
   }
 
   void _showError(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -146,6 +163,14 @@ class _UserManagementPageState extends State<UserManagementPage> {
               separatorBuilder: (_, _) => const SizedBox(height: 8),
               itemBuilder: (context, index) {
                 final user = _users[index];
+                final assignedServiceIds = {
+                  ...user.serviceIds,
+                  if (user.serviceId != null) user.serviceId!,
+                };
+                final assignedServices = _services
+                    .where((service) => assignedServiceIds.contains(service.id))
+                    .map((service) => service.name)
+                    .join(', ');
                 return Card(
                   child: ListTile(
                     leading: CircleAvatar(
@@ -163,9 +188,9 @@ class _UserManagementPageState extends State<UserManagementPage> {
                     ),
                     title: Text(user.displayName),
                     subtitle: Text(
-                      '${user.email}\n${user.role.label} · ${user.isActive ? 'Actif' : 'Désactivé'}',
+                      '${user.email}\n${user.role.label} · ${user.isActive ? 'Actif' : 'Désactivé'}${assignedServices.isEmpty ? '' : '\nServices : $assignedServices'}',
                     ),
-                    isThreeLine: true,
+                    isThreeLine: assignedServices.isNotEmpty,
                     trailing: PopupMenuButton<String>(
                       tooltip: 'Actions sur le compte',
                       onSelected: (value) {
@@ -203,18 +228,27 @@ class _NewUserInput {
     required this.username,
     required this.email,
     required this.role,
+    required this.serviceIds,
+    required this.specialty,
+    required this.photoUrl,
+    this.serviceId,
     this.password,
   });
 
   final String username;
   final String email;
   final StaffRole role;
+  final String? serviceId;
+  final List<String> serviceIds;
+  final String specialty;
+  final String photoUrl;
   final String? password;
 }
 
 class _UserDialog extends StatefulWidget {
-  const _UserDialog({this.user});
+  const _UserDialog({required this.services, this.user});
 
+  final List<HospitalService> services;
   final StaffUser? user;
 
   @override
@@ -230,18 +264,50 @@ class _UserDialogState extends State<_UserDialog> {
     text: widget.user?.email ?? '',
   );
   final _passwordController = TextEditingController();
+  late final _specialtyController = TextEditingController(
+    text: widget.user?.specialty ?? '',
+  );
+  late final _photoUrlController = TextEditingController(
+    text: widget.user?.photoUrl ?? '',
+  );
   late StaffRole _role = widget.user?.role ?? StaffRole.nurse;
+  late String? _doctorServiceId = widget.user?.serviceId;
+  String? _assignmentError;
+  late final Set<String> _secretaryServiceIds = {
+    if (widget.user != null) ...widget.user!.serviceIds,
+    if (widget.user != null &&
+        widget.user!.serviceIds.isEmpty &&
+        widget.user!.serviceId != null)
+      widget.user!.serviceId!,
+  };
 
   @override
   void dispose() {
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _specialtyController.dispose();
+    _photoUrlController.dispose();
     super.dispose();
   }
 
   void _save() {
     if (!_formKey.currentState!.validate()) return;
+    if (_role == StaffRole.secretary && _secretaryServiceIds.isEmpty) {
+      setState(
+        () =>
+            _assignmentError = 'Affectez au moins un service à la secrétaire.',
+      );
+      return;
+    }
+    final serviceIds = _role == StaffRole.secretary
+        ? _secretaryServiceIds.toList()
+        : const <String>[];
+    final serviceId = _role == StaffRole.doctor
+        ? _doctorServiceId
+        : _role == StaffRole.secretary && serviceIds.isNotEmpty
+        ? serviceIds.first
+        : null;
     if (widget.user case final user?) {
       Navigator.of(context).pop(
         StaffUser(
@@ -249,7 +315,10 @@ class _UserDialogState extends State<_UserDialog> {
           displayName: _nameController.text.trim(),
           email: _emailController.text.trim(),
           role: _role,
-          serviceId: user.serviceId,
+          serviceId: serviceId,
+          serviceIds: serviceIds,
+          specialty: _specialtyController.text.trim(),
+          photoUrl: _photoUrlController.text.trim(),
           isActive: user.isActive,
         ),
       );
@@ -259,6 +328,10 @@ class _UserDialogState extends State<_UserDialog> {
           username: _nameController.text.trim(),
           email: _emailController.text.trim(),
           role: _role,
+          serviceId: serviceId,
+          serviceIds: serviceIds,
+          specialty: _specialtyController.text.trim(),
+          photoUrl: _photoUrlController.text.trim(),
           password: _passwordController.text,
         ),
       );
@@ -290,7 +363,9 @@ class _UserDialogState extends State<_UserDialog> {
                 TextFormField(
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(labelText: 'Adresse e-mail'),
+                  decoration: const InputDecoration(
+                    labelText: 'Adresse e-mail',
+                  ),
                   validator: (value) {
                     final email = value?.trim() ?? '';
                     return email.contains('@')
@@ -323,6 +398,83 @@ class _UserDialogState extends State<_UserDialog> {
                     if (role != null) setState(() => _role = role);
                   },
                 ),
+                if (_role == StaffRole.doctor) ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String?>(
+                    initialValue: _doctorServiceId,
+                    decoration: const InputDecoration(labelText: 'Service'),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('Aucun service'),
+                      ),
+                      for (final service in widget.services)
+                        DropdownMenuItem<String?>(
+                          value: service.id,
+                          child: Text(service.name),
+                        ),
+                    ],
+                    onChanged: (value) =>
+                        setState(() => _doctorServiceId = value),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _specialtyController,
+                    maxLength: 120,
+                    decoration: const InputDecoration(
+                      labelText: 'Spécialité du médecin',
+                    ),
+                  ),
+                  TextFormField(
+                    controller: _photoUrlController,
+                    maxLength: 500,
+                    keyboardType: TextInputType.url,
+                    decoration: const InputDecoration(
+                      labelText: 'URL de la photo',
+                    ),
+                  ),
+                ],
+                if (_role == StaffRole.secretary) ...[
+                  const SizedBox(height: 12),
+                  const Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      'Services affectés',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  if (widget.services.isEmpty)
+                    const Text('Créez un service avant l’affectation.')
+                  else
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        for (final service in widget.services)
+                          FilterChip(
+                            label: Text(service.name),
+                            selected: _secretaryServiceIds.contains(service.id),
+                            onSelected: (selected) => setState(() {
+                              if (selected) {
+                                _secretaryServiceIds.add(service.id);
+                              } else {
+                                _secretaryServiceIds.remove(service.id);
+                              }
+                              _assignmentError = null;
+                            }),
+                          ),
+                      ],
+                    ),
+                  if (_assignmentError != null)
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Text(
+                        _assignmentError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ),
+                ],
               ],
             ),
           ),

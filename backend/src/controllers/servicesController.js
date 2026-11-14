@@ -103,8 +103,17 @@ function parseFields(body, creating = false) {
 }
 
 // GET /services — liste tous les services triés par nom
-async function list(_req, res) {
-  const services = await Service.find().sort({ name: 1 }).limit(200);
+async function list(req, res) {
+  const query = {};
+  if (req.user.role === 'patient') query.active = true;
+  if (req.user.role === 'secretary') {
+    const ids = [
+      ...(req.user.serviceIds || []).map((id) => id.toString()),
+      ...(req.user.serviceId ? [req.user.serviceId.toString()] : []),
+    ];
+    query._id = { $in: [...new Set(ids)] };
+  }
+  const services = await Service.find(query).sort({ name: 1 }).limit(200);
   return res.json({ services: services.map(serviceResponse) });
 }
 

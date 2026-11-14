@@ -1,7 +1,8 @@
 const mongoose = require('mongoose');
 const { HttpError } = require('../errors');
 
-const ROLES = ['admin', 'doctor', 'nurse', 'patient'];
+const ROLES = ['admin', 'doctor', 'nurse', 'secretary', 'patient'];
+const APPOINTMENT_STATUSES = ['pending', 'accepted', 'in_progress', 'cancelled'];
 
 function requireObject(value, label = 'Request body') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -39,6 +40,13 @@ function requirePassword(value) {
 function requireRole(value) {
   if (!ROLES.includes(value)) {
     throw new HttpError(400, `role must be one of: ${ROLES.join(', ')}.`);
+  }
+  return value;
+}
+
+function requireAppointmentStatus(value) {
+  if (!APPOINTMENT_STATUSES.includes(value)) {
+    throw new HttpError(400, `status must be one of: ${APPOINTMENT_STATUSES.join(', ')}.`);
   }
   return value;
 }
@@ -90,6 +98,7 @@ module.exports = {
   requireEmail,
   requirePassword,
   requireRole,
+  requireAppointmentStatus,
   requireBoolean,
   requireId,
   requireDate,

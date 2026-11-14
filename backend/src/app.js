@@ -7,6 +7,8 @@ const userRoutes = require('./routes/userRoutes');
 const serviceRoutes = require('./routes/serviceRoutes');
 const shiftRoutes = require('./routes/shiftRoutes');
 const handoverRoutes = require('./routes/handoverRoutes');
+const appointmentRoutes = require('./routes/appointmentRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 const app = express();
 
@@ -34,6 +36,8 @@ app.use('/users', userRoutes);
 app.use('/services', serviceRoutes);
 app.use('/shifts', shiftRoutes);
 app.use('/handovers', handoverRoutes);
+app.use('/appointments', appointmentRoutes);
+app.use('/notifications', notificationRoutes);
 app.use(notFound);
 app.use(errorHandler);
 

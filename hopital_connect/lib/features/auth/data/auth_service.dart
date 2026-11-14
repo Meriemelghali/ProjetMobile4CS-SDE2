@@ -55,4 +55,16 @@ class AuthService {
     }
     return StaffUser.fromJson(user);
   }
+
+  Future<StaffUser> updateProfile(Map<String, Object?> updates) async {
+    final response = await _api.put('/auth/me', body: updates);
+    final user = response['user'];
+    if (user is! Map<String, dynamic>) {
+      throw const ApiException('Réponse de profil invalide.');
+    }
+    final staffUser = StaffUser.fromJson(user);
+    final token = SessionManager.instance.token;
+    if (token != null) await SessionManager.instance.save(token, staffUser);
+    return staffUser;
+  }
 }

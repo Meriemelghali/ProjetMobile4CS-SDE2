@@ -2,6 +2,7 @@ enum StaffRole {
   administrator('Administrateur', 'admin'),
   doctor('Médecin', 'doctor'),
   nurse('Personnel soignant', 'nurse'),
+  secretary('Secrétaire', 'secretary'),
   patient('Patient', 'patient');
 
   const StaffRole(this.label, this.apiValue);
@@ -12,6 +13,7 @@ enum StaffRole {
     'admin' || 'administrator' => StaffRole.administrator,
     'doctor' => StaffRole.doctor,
     'nurse' => StaffRole.nurse,
+    'secretary' => StaffRole.secretary,
     'patient' => StaffRole.patient,
     _ => throw FormatException('Rôle utilisateur inconnu : $value'),
   };
