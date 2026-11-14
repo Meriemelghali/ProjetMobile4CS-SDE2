@@ -40,7 +40,7 @@ void main() {
     expect(find.text('Adresse e-mail'), findsOneWidget);
     expect(find.text('Mot de passe'), findsOneWidget);
     expect(find.text('Rôle de démonstration'), findsNothing);
-    expect(find.text('Créer un compte patient'), findsOneWidget);
+    expect(find.text('Créer un compte'), findsOneWidget);
   });
 
   testWidgets('patient home exposes only the patient account', (tester) async {

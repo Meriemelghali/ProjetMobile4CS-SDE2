@@ -175,7 +175,7 @@ class _LoginPageState extends State<LoginPage> {
                           const SizedBox(height: 8),
                           TextButton(
                             onPressed: _isSigningIn ? null : _openRegistration,
-                            child: const Text('Créer un compte patient'),
+                            child: const Text('Créer un compte'),
                           ),
                           const SizedBox(height: 24),
                           FilledButton.icon(
