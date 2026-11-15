@@ -1,203 +1,204 @@
 // =============================================================================
 // WIDGET : ServiceQrDialog
-// Dialog affichant un QR code contenant les informations clés d'un service.
-// Le QR code encode une fiche lisible par n'importe quel scanner standard.
+// Affiche un QR code qui encode l'URL vers le PDF du service sur le backend.
+// Quand quelqu'un scanne le QR → son navigateur ouvre le PDF directement.
+// Le PDF est généré en temps réel par le backend (endpoint public sans auth).
 // =============================================================================
 
-import 'package:flutter/material.dart';        // Widgets Flutter de base
-import 'package:qr_flutter/qr_flutter.dart';   // Package externe pour générer des QR codes
+import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart'; // Génération du QR code
 
-import '../../../core/theme/app_colors.dart';   // Couleurs du projet (navy, blue…)
-import '../domain/hospital_service.dart';       // Modèle HospitalService
+import '../../../core/config/api_config.dart'; // URL de base du backend
+import '../../../core/theme/app_colors.dart';
+import '../domain/hospital_service.dart';
+import '../utils/service_pdf.dart'; // Pour le bouton "Ouvrir PDF" dans l'app
 
-/// Dialog affichant le QR code d'un service hospitalier.
-/// Reçoit un [service] et génère dynamiquement le QR code à partir de ses données.
-class ServiceQrDialog extends StatelessWidget {
-  const ServiceQrDialog({super.key, required this.service}); // service obligatoire
+/// Dialog affichant le QR code du service.
+/// Le QR encode l'URL : {baseUrl}/services/{id}/pdf
+/// Quand scanné → ouvre le PDF complet du service dans le navigateur.
+class ServiceQrDialog extends StatefulWidget {
+  const ServiceQrDialog({super.key, required this.service});
 
-  /// Service dont les informations seront encodées dans le QR code.
+  /// Service dont on génère le QR code.
   final HospitalService service;
 
-  // --------------------------------------------------------------------------
-  // Méthode privée : construit le texte encodé dans le QR code
-  // --------------------------------------------------------------------------
+  @override
+  State<ServiceQrDialog> createState() => _ServiceQrDialogState();
+}
 
-  /// Construit une chaîne de texte structurée avec les informations du service.
-  /// Format : une clé par ligne (KEY: valeur), lisible par tous les scanners.
-  String _buildQrData() {
-    final lines = <String>[]; // Liste vide qui accumulera les lignes de données
+class _ServiceQrDialogState extends State<ServiceQrDialog> {
+  /// Indique si le PDF est en cours de génération (pour le bouton spinner)
+  bool _loadingPdf = false;
 
-    lines.add('SERVICE: ${service.name}');           // Toujours présent : nom du service
-    lines.add('TYPE: ${service.serviceType.label}'); // Toujours présent : catégorie médicale
+  /// URL complète vers le PDF du service sur le backend.
+  /// Format : http://localhost:3000/services/{id}/pdf
+  String get _pdfUrl =>
+      '${ApiConfig.baseUrl}/services/${widget.service.id}/pdf';
 
-    // Champs optionnels : ajoutés seulement s'ils sont renseignés (non vides)
-    if (service.location.isNotEmpty) {
-      lines.add('LIEU: ${service.location}');        // Localisation dans l'hôpital
+  /// Ouvre le PDF directement dans l'app via le package printing.
+  Future<void> _openPdf() async {
+    setState(() => _loadingPdf = true); // Active le spinner
+    try {
+      await ServicePdf.openPdf(context, widget.service);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur PDF : $e'),
+            backgroundColor: const Color(0xFFD64045),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loadingPdf = false);
     }
-    if (service.headName.isNotEmpty) {
-      lines.add('RESPONSABLE: ${service.headName}'); // Nom du chef de service
-    }
-    if (service.phone.isNotEmpty) {
-      lines.add('TEL: ${service.phone}');            // Numéro de téléphone
-    }
-    if (service.email.isNotEmpty) {
-      lines.add('EMAIL: ${service.email}');          // Adresse email
-    }
-    if (service.openingHours.isNotEmpty) {
-      lines.add('HORAIRES: ${service.openingHours}'); // Horaires d'ouverture
-    }
-    if (service.capacity > 0) {                      // 0 signifie "non renseigné"
-      lines.add('CAPACITE: ${service.capacity} lits'); // Nombre de lits
-    }
-
-    return lines.join('\n'); // Réunit toutes les lignes avec un retour à la ligne entre chaque
   }
 
   @override
   Widget build(BuildContext context) {
-    final qrData = _buildQrData(); // Génère les données une seule fois (évite de recalculer)
-
-    // Dialog : fenêtre modale centrée sur l'écran
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)), // Coins arrondis à 24px
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: Padding(
-        padding: const EdgeInsets.all(24), // Marge intérieure de 24px sur tous les côtés
+        padding: const EdgeInsets.all(24),
         child: Column(
-          mainAxisSize: MainAxisSize.min, // La colonne prend la hauteur minimale nécessaire
+          mainAxisSize: MainAxisSize.min,
           children: [
 
-            // ----------------------------------------------------------------
-            // EN-TÊTE : icône QR + titre + nom du service + bouton fermer
-            // ----------------------------------------------------------------
+            // ---- En-tête : icône + titre + bouton fermer ----
             Row(
               children: [
-                // Icône QR code en grand
-                const Icon(Icons.qr_code_2_rounded, color: AppColors.navy, size: 28),
-                const SizedBox(width: 10), // Espacement de 10px
-
-                // Colonne contenant le titre et le nom du service
-                Expanded( // Prend tout l'espace disponible entre l'icône et le bouton fermer
+                const Icon(Icons.qr_code_2_rounded,
+                    color: AppColors.navy, size: 28),
+                const SizedBox(width: 10),
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Titre fixe du dialog
                       const Text(
-                        'QR Code du service',
+                        'QR Code — Fiche PDF',
                         style: TextStyle(
                           color: AppColors.navy,
                           fontSize: 17,
-                          fontWeight: FontWeight.w700, // Gras
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                      // Sous-titre : nom du service (pour savoir quel QR on regarde)
+                      // Nom du service sous le titre
                       Text(
-                        service.name,
+                        widget.service.name,
                         style: const TextStyle(
-                          color: Color(0xFF687B86), // Gris-bleu discret
-                          fontSize: 13,
-                        ),
+                            color: Color(0xFF687B86), fontSize: 13),
                       ),
                     ],
                   ),
                 ),
-
-                // Bouton fermer (croix) en haut à droite
+                // Bouton fermer
                 IconButton(
-                  icon: const Icon(Icons.close_rounded, color: Color(0xFF8797A0)),
-                  onPressed: () => Navigator.of(context).pop(), // Ferme le dialog
+                  icon: const Icon(Icons.close_rounded,
+                      color: Color(0xFF8797A0)),
+                  onPressed: () => Navigator.of(context).pop(),
                 ),
               ],
             ),
 
-            const SizedBox(height: 20), // Espacement de 20px entre l'en-tête et le QR code
+            const SizedBox(height: 20),
 
-            // ----------------------------------------------------------------
-            // QR CODE
-            // Container blanc obligatoire : les scanners ont besoin d'un fond blanc
-            // ----------------------------------------------------------------
+            // ---- QR Code ----
+            // Fond blanc obligatoire pour que les scanners puissent lire le QR
             Container(
-              padding: const EdgeInsets.all(16), // Marge blanche autour du QR code (zone calme)
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: Colors.white,              // Fond blanc impératif pour la lisibilité du QR
-                borderRadius: BorderRadius.circular(16), // Coins arrondis du cadre
-                border: Border.all(color: const Color(0xFFE5ECEF)), // Bordure grise légère
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFE5ECEF)),
               ),
-
-              // QrImageView : widget du package qr_flutter qui génère le QR code
               child: QrImageView(
-                data: qrData,              // Données texte à encoder dans le QR code
-                version: QrVersions.auto,  // Choisit automatiquement la version du QR (taille des données)
-                size: 220,                 // Dimensions du QR code : 220×220 pixels logiques
-                backgroundColor: Colors.white, // Fond blanc du QR code lui-même
+                data: _pdfUrl,              // URL encodée dans le QR code
+                version: QrVersions.auto,   // Version automatique selon la longueur des données
+                size: 200,                  // Taille du QR en pixels logiques
+                backgroundColor: Colors.white,
 
-                // Style des modules (les petits carrés noirs qui forment le QR)
+                // Style des modules (carrés noirs du QR)
                 dataModuleStyle: const QrDataModuleStyle(
-                  dataModuleShape: QrDataModuleShape.square, // Carrés (pas ronds)
-                  color: AppColors.navy,  // Couleur des modules : bleu foncé du projet
+                  dataModuleShape: QrDataModuleShape.square,
+                  color: AppColors.navy,    // Bleu foncé pour les modules
                 ),
 
-                // Style des "yeux" (les trois grands carrés dans les coins du QR)
+                // Style des coins du QR
                 eyeStyle: const QrEyeStyle(
-                  eyeShape: QrEyeShape.square, // Forme carrée pour les yeux
-                  color: AppColors.blue,       // Couleur des yeux : bleu primaire du projet
+                  eyeShape: QrEyeShape.square,
+                  color: AppColors.blue,    // Bleu primaire pour les coins
                 ),
               ),
             ),
 
-            const SizedBox(height: 16), // Espacement entre le QR et le message
+            const SizedBox(height: 14),
 
-            // ----------------------------------------------------------------
-            // MESSAGE EXPLICATIF
-            // ----------------------------------------------------------------
+            // ---- Message explicatif ----
             const Text(
-              'Scannez ce QR code pour accéder\naux informations de ce service.',
-              textAlign: TextAlign.center, // Centré horizontalement
+              'Scannez pour ouvrir la fiche PDF\ndu service dans votre navigateur.',
+              textAlign: TextAlign.center,
               style: TextStyle(
-                color: Color(0xFF687B86), // Gris-bleu discret
+                color: Color(0xFF687B86),
                 fontSize: 13,
-                height: 1.4,             // Interligne de 1.4× pour la lisibilité
+                height: 1.4,
               ),
             ),
 
-            const SizedBox(height: 8), // Petit espacement
+            const SizedBox(height: 8),
 
-            // ----------------------------------------------------------------
-            // SECTION DÉPLIABLE : affiche les données brutes encodées
-            // Utile pour vérifier ce qui est dans le QR code
-            // ----------------------------------------------------------------
-            ExpansionTile(
-              // Titre du panneau dépliable
-              title: const Text(
-                'Voir les données encodées',
-                style: TextStyle(fontSize: 12, color: Color(0xFF8797A0)), // Petit texte gris
+            // ---- URL encodée (affichée en petit pour transparence) ----
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF4F7F8),
+                borderRadius: BorderRadius.circular(8),
               ),
-              tilePadding: EdgeInsets.zero, // Supprime le padding interne du tile
-
-              children: [
-                // Container affichant les données texte du QR code
-                Container(
-                  width: double.infinity, // Prend toute la largeur disponible
-                  padding: const EdgeInsets.all(12), // Marge intérieure de 12px
-
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF4F7F8),  // Fond gris très pâle
-                    borderRadius: BorderRadius.circular(10), // Coins arrondis
-                  ),
-
-                  child: Text(
-                    qrData, // Affiche exactement les données encodées dans le QR
-
-                    style: const TextStyle(
-                      fontFamily: 'monospace', // Police à chasse fixe → alignement des colonnes
-                      fontSize: 11,           // Très petite pour tenir dans le widget
-                      color: Color(0xFF536A77), // Gris-bleu moyen
-                      height: 1.6,            // Interligne large pour chaque ligne KEY: valeur
-                    ),
-                  ),
+              child: Text(
+                _pdfUrl,                   // Affiche l'URL exacte encodée
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontFamily: 'monospace', // Police monospace pour l'URL
+                  fontSize: 10,
+                  color: Color(0xFF536A77),
                 ),
-              ],
+              ),
             ),
 
+            const SizedBox(height: 16),
+
+            // ---- Bouton "Ouvrir le PDF dans l'app" ----
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                // Désactivé pendant la génération (spinner affiché)
+                onPressed: _loadingPdf ? null : _openPdf,
+                icon: _loadingPdf
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.picture_as_pdf_outlined, size: 18),
+                label: Text(_loadingPdf
+                    ? 'Génération en cours…'
+                    : 'Ouvrir le PDF dans l\'app'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFD64045), // Rouge PDF
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
           ],
         ),
       ),
