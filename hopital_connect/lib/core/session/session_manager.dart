@@ -20,13 +20,17 @@ class SessionManager {
     final preferences = await SharedPreferences.getInstance();
     _token = token;
     await preferences.setString(_tokenKey, token);
+    await preferences.setString(_lastRoleKey(user.id), user.role.apiValue);
     await preferences.setString(
       _userKey,
       jsonEncode({
         'id': user.id,
         'username': user.displayName,
         'email': user.email,
+        ...user.toProfileJson(),
         'role': user.role.apiValue,
+        'roles': user.assignedRoles.map((role) => role.apiValue).toList(),
+        'hospitalId': user.hospitalId,
         'serviceId': user.serviceId,
         'active': user.isActive,
       }),
@@ -60,4 +64,11 @@ class SessionManager {
     await preferences.remove(_tokenKey);
     await preferences.remove(_userKey);
   }
+
+  Future<String?> lastActiveRole(String userId) async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getString(_lastRoleKey(userId));
+  }
+
+  String _lastRoleKey(String userId) => 'last_active_role_$userId';
 }

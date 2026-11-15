@@ -24,4 +24,8 @@ class HandoverService {
     final response = await _api.post('/handovers', body: handover.toJson());
     return Handover.fromJson(response['handover'] as Map<String, dynamic>);
   }
+
+  Future<void> markRead(String handoverId) async {
+    await _api.post('/handovers/$handoverId/read');
+  }
 }

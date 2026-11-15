@@ -60,7 +60,14 @@ async function parseFields(body, creating = false) {
 
 async function list(req, res) {
   const query = {};
-  if (req.query.userId !== undefined) query.userId = requireId(req.query.userId, 'userId');
+  if (['doctor', 'service_head', 'secretary'].includes(req.user.role)) {
+    if (req.query.userId !== undefined && String(req.query.userId) !== String(req.user._id)) {
+      throw new HttpError(403, 'Users can only view their own shifts.');
+    }
+    query.userId = req.user._id;
+  } else if (req.query.userId !== undefined) {
+    query.userId = requireId(req.query.userId, 'userId');
+  }
   if (req.query.date !== undefined) {
     const start = requireDateOnly(req.query.date);
     const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);

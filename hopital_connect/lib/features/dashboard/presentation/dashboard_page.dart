@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../core/session/app_session.dart';
@@ -6,11 +7,20 @@ import '../../../core/session/session_manager.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/widgets.dart';
 import '../../admin/presentation/admin_tab.dart';
+import '../../appointments/data/appointment_service.dart';
+import '../../appointments/domain/appointment.dart';
+import '../../appointments/domain/appointment_notification.dart';
+import '../../appointments/data/notification_service.dart';
+import '../../appointments/presentation/appointments_tab.dart';
 import '../../auth/data/auth_service.dart';
 import '../../auth/presentation/login_page.dart';
+import '../../hospital/data/hospital_resource_service.dart';
+import '../../hospital/domain/hospital_resources.dart';
+import '../../hospital/presentation/hospital_tab.dart';
 import '../../planning/data/shift_service.dart';
 import '../../planning/domain/shift.dart';
 import '../../planning/presentation/planning_tab.dart';
+import '../../pharmacy/presentation/pharmacy_tab.dart';
 import '../../services/data/service_service.dart';
 import '../../services/domain/hospital_service.dart';
 import '../../services/presentation/service_form_dialog.dart';
@@ -22,6 +32,9 @@ import '../../users/data/user_service.dart';
 import '../../users/domain/staff_role.dart';
 import '../../users/domain/staff_user.dart';
 import '../../users/presentation/user_management_page.dart';
+import '../../users/presentation/patient_profile_tab.dart';
+import '../../appointments/presentation/patient_home_tab.dart';
+import 'doctor_space_tabs.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key, required this.session});
@@ -33,20 +46,56 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
+  static const _useMockHospitalData = bool.fromEnvironment(
+    'USE_MOCK_DATA',
+    defaultValue: false,
+  );
+
   int _selectedIndex = 0;
   bool _isLoading = true;
+  bool _isSwitchingRole = false;
   String? _error;
   late StaffUser _user = widget.session.user;
   List<StaffUser> _users = const [];
   List<HospitalService> _services = const [];
   List<Shift> _shifts = const [];
   List<Handover> _handovers = const [];
+  List<Appointment> _appointments = const [];
+  List<HospitalIntervention> _interventions = const [];
+  List<AppointmentNotification> _notifications = const [];
+  List<AppointmentDoctor> _doctors = const [];
+  List<ServiceColleague> _colleagues = const [];
+  PatientRecordType _followUpType = PatientRecordType.all;
+
+  List<HospitalService> get _managedServices =>
+      _user.role == StaffRole.serviceHead
+      ? _services
+            .where(
+              (service) =>
+                  service.id == _user.serviceId ||
+                  service.headUserId == _user.id,
+            )
+            .toList()
+      : _services;
+
+  Set<String> _serviceIdsFor(StaffUser user) => {
+    ...user.serviceIds,
+    if (user.serviceId != null) user.serviceId!,
+  };
+
+  List<HospitalService> _assignedServicesFor(StaffUser user) {
+    final serviceIds = _serviceIdsFor(user);
+    return _services
+        .where((service) => serviceIds.contains(service.id))
+        .toList();
+  }
 
   static const _titles = [
     'Mon espace',
     'Mon planning',
     'Mon service',
     'Transmissions',
+    'Ressources hospitalières',
     'Administration',
   ];
 
@@ -64,6 +113,48 @@ class _DashboardPageState extends State<DashboardPage> {
     try {
       final user = await AuthService().currentUser();
       if (user.role == StaffRole.patient) {
+        final results = await Future.wait([
+          AppointmentService().list(),
+          ServiceService().list(),
+          NotificationService().list(),
+        ]);
+        if (!mounted) return;
+        setState(() {
+          _user = user;
+          _users = const [];
+          _services = results[1] as List<HospitalService>;
+          _shifts = const [];
+          _handovers = const [];
+          _appointments = results[0] as List<Appointment>;
+          _interventions = const [];
+          _doctors = const [];
+          _notifications = results[2] as List<AppointmentNotification>;
+          _colleagues = const [];
+        });
+        return;
+      }
+      if (user.role == StaffRole.secretary) {
+        final results = await Future.wait([
+          AppointmentService().list(),
+          AppointmentService().listDoctors(),
+          ServiceService().list(),
+          UserService().listInterventionParticipants(),
+        ]);
+        if (!mounted) return;
+        setState(() {
+          _user = user;
+          _users = results[3] as List<StaffUser>;
+          _services = results[2] as List<HospitalService>;
+          _shifts = const [];
+          _handovers = const [];
+          _appointments = results[0] as List<Appointment>;
+          _interventions = const [];
+          _doctors = results[1] as List<AppointmentDoctor>;
+          _colleagues = const [];
+        });
+        return;
+      }
+      if (user.role == StaffRole.pharmacist) {
         if (!mounted) return;
         setState(() {
           _user = user;
@@ -71,18 +162,79 @@ class _DashboardPageState extends State<DashboardPage> {
           _services = const [];
           _shifts = const [];
           _handovers = const [];
+          _appointments = const [];
+          _interventions = const [];
+          _doctors = const [];
+          _colleagues = const [];
+          _notifications = const [];
         });
         return;
       }
       final isAdmin = user.role == StaffRole.administrator;
+      final isDoctor = user.role == StaffRole.doctor;
       final services = await ServiceService().list();
-      final shifts = await ShiftService().list(
-        userId: isAdmin ? null : user.id,
+      final doctorServiceIds = _serviceIdsFor(user);
+      final doctorServices = isDoctor
+          ? services
+                .where((service) => doctorServiceIds.contains(service.id))
+                .toList()
+          : const <HospitalService>[];
+      final doctorHasOperations = doctorServices.any(
+        (service) => service.hasOperations,
       );
-      final handovers = await HandoverService().list(
-        serviceId: isAdmin ? null : user.serviceId,
-      );
-      final users = isAdmin ? await UserService().list() : const <StaffUser>[];
+      final isOperatingRoomManager =
+          user.role == StaffRole.operatingRoomManager;
+      final shifts = isOperatingRoomManager
+          ? <Shift>[]
+          : await ShiftService().list(userId: isAdmin ? null : user.id);
+      String? serviceHeadServiceId;
+      if (user.role == StaffRole.serviceHead) {
+        for (final service in services) {
+          if (service.headUserId == user.id) {
+            serviceHeadServiceId = service.id;
+            break;
+          }
+        }
+      }
+      final handoverServiceId = isAdmin
+          ? null
+          : user.serviceId ?? serviceHeadServiceId;
+      final handovers = isOperatingRoomManager
+          ? <Handover>[]
+          : (user.role == StaffRole.serviceHead ||
+                    user.role == StaffRole.secretary) &&
+                handoverServiceId == null
+          ? <Handover>[]
+          : await HandoverService().list(
+              serviceId: isDoctor ? null : handoverServiceId,
+            );
+      final users = isAdmin
+          ? await UserService().list()
+          : isDoctor || user.role == StaffRole.secretary
+          ? await UserService().listInterventionParticipants()
+          : user.role == StaffRole.nurse || user.role == StaffRole.serviceHead
+          ? await UserService().listAssignablePatients()
+          : const <StaffUser>[];
+      final appointments = isAdmin || isDoctor
+          ? await AppointmentService().list()
+          : const <Appointment>[];
+      final interventions = isDoctor && doctorHasOperations
+          ? await HospitalResourceService().interventions()
+          : <HospitalIntervention>[];
+      final colleagueLists = isDoctor
+          ? await Future.wait(
+              doctorServiceIds.map(
+                (serviceId) => UserService().listServiceMembers(serviceId),
+              ),
+            )
+          : const <List<ServiceColleague>>[];
+      final colleagues = {
+        for (final colleague in colleagueLists.expand((items) => items))
+          colleague.id: colleague,
+      }.values.toList();
+      final doctors = isAdmin
+          ? await AppointmentService().listDoctors()
+          : const <AppointmentDoctor>[];
       if (!mounted) return;
       setState(() {
         _user = user;
@@ -90,10 +242,15 @@ class _DashboardPageState extends State<DashboardPage> {
         _shifts = shifts;
         _handovers = handovers;
         _users = users;
+        _appointments = appointments;
+        _interventions = interventions;
+        _doctors = doctors;
+        _colleagues = colleagues;
+        _notifications = const [];
       });
     } on ApiException catch (error) {
       if (error.statusCode == 401) {
-        await _signOut();
+        await _signOut(confirm: false);
         return;
       }
       if (mounted) setState(() => _error = error.message);
@@ -102,13 +259,92 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
-  Future<void> _signOut() async {
+  Future<void> _signOut({bool confirm = true}) async {
+    if (confirm) {
+      final shouldSignOut = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Se déconnecter ?'),
+          content: const Text('Voulez-vous vraiment vous déconnecter ?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Annuler'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Déconnexion'),
+            ),
+          ],
+        ),
+      );
+      if (shouldSignOut != true) return;
+    }
     await SessionManager.instance.clear();
     if (!mounted) return;
     await Navigator.of(context).pushAndRemoveUntil<void>(
       MaterialPageRoute<void>(builder: (_) => const LoginPage()),
       (_) => false,
     );
+  }
+
+  Future<void> _showRoleSwitcher() async {
+    if (_user.assignedRoles.length < 2 || _isSwitchingRole) return;
+    final selectedRole = await showModalBottomSheet<StaffRole>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(
+              title: Text(
+                'Continuer en tant que…',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+            for (final role in _user.assignedRoles)
+              ListTile(
+                leading: Icon(
+                  role == _user.role
+                      ? Icons.check_circle
+                      : Icons.circle_outlined,
+                  color: AppColors.blue,
+                ),
+                title: Text(role.label),
+                trailing: role == _user.role ? const Icon(Icons.check) : null,
+                onTap: () => Navigator.pop(context, role),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selectedRole != null && selectedRole != _user.role) {
+      await _switchRole(selectedRole);
+    }
+  }
+
+  Future<void> _switchRole(StaffRole role) async {
+    setState(() => _isSwitchingRole = true);
+    try {
+      final session = await AuthService().switchRole(role);
+      if (!mounted) return;
+      setState(() => _isSwitchingRole = false);
+      Navigator.of(context).pushAndRemoveUntil<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => DashboardPage(session: session),
+        ),
+        (_) => false,
+      );
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _isSwitchingRole = false);
+      if (error.statusCode == 401) {
+        await _signOut(confirm: false);
+      } else {
+        _showError(error);
+      }
+    }
   }
 
   void _showError(Object error) {
@@ -121,13 +357,26 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _addHandover() async {
-    if (_services.isEmpty) {
-      _showError(const ApiException('Ajoutez d’abord un service.'));
+    final availableServices = _user.role == StaffRole.administrator
+        ? _services
+        : _user.role == StaffRole.serviceHead
+        ? _managedServices
+        : _services
+              .where((service) => _serviceIdsFor(_user).contains(service.id))
+              .toList();
+    if (availableServices.isEmpty) {
+      _showError(
+        ApiException(
+          _user.role == StaffRole.serviceHead
+              ? 'Aucun service ne vous est attribué.'
+              : 'Ajoutez d’abord un service.',
+        ),
+      );
       return;
     }
     final draft = await showDialog<Handover>(
       context: context,
-      builder: (_) => NewHandoverDialog(services: _services),
+      builder: (_) => NewHandoverDialog(services: availableServices),
     );
     if (draft == null || !mounted) return;
     try {
@@ -163,7 +412,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _addService() async {
     final draft = await showDialog<HospitalService>(
       context: context,
-      builder: (_) => const ServiceFormDialog(),
+      builder: (_) => ServiceFormDialog(users: _users),
     );
     if (draft == null || !mounted) return;
     try {
@@ -177,7 +426,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _editService(HospitalService service) async {
     final edited = await showDialog<HospitalService>(
       context: context,
-      builder: (_) => ServiceFormDialog(service: service),
+      builder: (_) => ServiceFormDialog(service: service, users: _users),
     );
     if (edited == null || !mounted) return;
     try {
@@ -196,6 +445,241 @@ class _DashboardPageState extends State<DashboardPage> {
       _showError(error);
     }
   }
+
+  Future<void> _createAppointment() async {
+    final draft = await showDialog<AppointmentDraft>(
+      context: context,
+      builder: (_) => AppointmentFormDialog(
+        services: _services,
+        isArabic: _user.language == 'ar' && _user.role == StaffRole.patient,
+      ),
+    );
+    if (draft == null || !mounted) return;
+    try {
+      await AppointmentService().create(
+        doctorId: draft.doctorId,
+        startAt: draft.startAt,
+        reason: draft.reason,
+      );
+      await _load();
+    } on ApiException catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _editAppointment(Appointment appointment) async {
+    final draft = await showDialog<AppointmentDraft>(
+      context: context,
+      builder: (_) => AppointmentFormDialog(
+        services: _services,
+        appointment: appointment,
+        isArabic: _user.language == 'ar' && _user.role == StaffRole.patient,
+      ),
+    );
+    if (draft == null || !mounted) return;
+    try {
+      await AppointmentService().update(
+        appointment,
+        doctorId: draft.doctorId,
+        startAt: draft.startAt,
+        reason: draft.reason,
+      );
+      await _load();
+    } on ApiException catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _updateAppointmentStatus(
+    Appointment appointment,
+    AppointmentStatus status,
+  ) async {
+    try {
+      await AppointmentService().update(appointment, status: status);
+      await _load();
+    } on ApiException catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _claimAppointment(Appointment appointment) async {
+    try {
+      await AppointmentService().claim(appointment);
+      await _load();
+    } on ApiException catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _releaseAppointment(Appointment appointment) async {
+    try {
+      await AppointmentService().release(appointment);
+      await _load();
+    } on ApiException catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _decideAppointment(
+    Appointment appointment,
+    String action,
+    String? reason,
+    DateTime? proposedStartAt,
+  ) async {
+    try {
+      await AppointmentService().decide(
+        appointment,
+        action: action,
+        reason: reason,
+        proposedStartAt: proposedStartAt,
+      );
+      await _load();
+    } on ApiException catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _respondToProposal(Appointment appointment, bool accept) async {
+    try {
+      await AppointmentService().respondToProposal(appointment, accept: accept);
+      await _load();
+    } on ApiException catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _markNotificationsRead() async {
+    try {
+      await NotificationService().markAllRead();
+      final notifications = await NotificationService().list();
+      if (mounted) setState(() => _notifications = notifications);
+    } on ApiException catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _updatePatientProfile(Map<String, Object?> updates) async {
+    final user = await AuthService().updateProfile(updates);
+    if (mounted) setState(() => _user = user);
+  }
+
+  Future<void> _confirmCancelAppointment(Appointment appointment) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Annuler le rendez-vous ?'),
+        content: const Text('Cette action ne peut pas être annulée.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Garder le rendez-vous'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Annuler le rendez-vous'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _updateAppointmentStatus(appointment, AppointmentStatus.cancelled);
+    }
+  }
+
+  Future<void> _showPatientAppointmentDetails(
+    Appointment appointment,
+  ) => showDialog<void>(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: const Text('Détails du rendez-vous'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(_appointmentDateTime(appointment.startAt)),
+          Text('Médecin : ${appointment.doctorName}'),
+          Text(
+            'Service : ${appointment.serviceName.isEmpty ? 'Non renseigné' : appointment.serviceName}',
+          ),
+          Text(
+            'Lieu : ${appointment.serviceLocation.isEmpty ? 'Non renseigné' : appointment.serviceLocation}',
+          ),
+          Text('Statut : ${appointment.status.label}'),
+          Text('Motif : ${appointment.reason}'),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Fermer'),
+        ),
+      ],
+    ),
+  );
+
+  Future<void> _openDirections(Appointment? appointment) async {
+    final location = appointment?.serviceLocation ?? '';
+    if (location.isEmpty) {
+      _showError(
+        const ApiException(
+          'Aucune adresse n’est renseignée pour ce rendez-vous.',
+        ),
+      );
+      return;
+    }
+    final uri = Uri.parse(
+      'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(location)}',
+    );
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
+        mounted) {
+      _showError(const ApiException('Impossible d’ouvrir l’itinéraire.'));
+    }
+  }
+
+  Future<void> _contactHospital(Appointment? appointment) async {
+    final servicePhone = appointment?.servicePhone.isNotEmpty == true
+        ? appointment!.servicePhone
+        : _doctors.firstOrNull?.servicePhone ?? '';
+    final serviceEmail = appointment?.serviceEmail.isNotEmpty == true
+        ? appointment!.serviceEmail
+        : _doctors.firstOrNull?.serviceEmail ?? '';
+    final phone = servicePhone;
+    final email = serviceEmail;
+    final uri = phone.isNotEmpty
+        ? Uri.parse('tel:${phone.replaceAll(RegExp(r'\s+'), '')}')
+        : email.isNotEmpty
+        ? Uri.parse('mailto:$email')
+        : null;
+    if (uri == null) {
+      _showError(
+        const ApiException(
+          'Les coordonnées de l’hôpital ne sont pas renseignées.',
+        ),
+      );
+      return;
+    }
+    if (!await launchUrl(uri) && mounted) {
+      _showError(
+        const ApiException('Impossible d’ouvrir l’application de contact.'),
+      );
+    }
+  }
+
+  Future<void> _showEmergencyInfo() => showDialog<void>(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: const Text('Urgences'),
+      content: const Text(
+        'En cas d’urgence, contactez immédiatement les services d’urgence de votre région.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Fermer'),
+        ),
+      ],
+    ),
+  );
 
   Future<void> _manageUsers() async {
     await Navigator.of(context).push<void>(
@@ -234,28 +718,48 @@ class _DashboardPageState extends State<DashboardPage> {
     ),
   );
 
-  Future<void> _showHandoverDetails(Handover handover) => showDialog<void>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: Text(handover.title),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(handover.message),
-          const SizedBox(height: 12),
-          Text('${handover.author} · ${handover.time}'),
-          if (handover.important) const Text('Important'),
+  Future<void> _showHandoverDetails(Handover handover) async {
+    if (_user.role != StaffRole.administrator && !handover.isRead) {
+      try {
+        await HandoverService().markRead(handover.id);
+        if (!mounted) return;
+        setState(() {
+          _handovers = _handovers
+              .map(
+                (item) =>
+                    item.id == handover.id ? item.copyWith(isRead: true) : item,
+              )
+              .toList();
+        });
+      } on ApiException catch (error) {
+        _showError(error);
+        return;
+      }
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(handover.title),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(handover.message),
+            const SizedBox(height: 12),
+            Text('${handover.author} · ${handover.time}'),
+            if (handover.important) const Text('Important'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Fermer'),
+          ),
         ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Fermer'),
-        ),
-      ],
-    ),
-  );
+    );
+  }
 
   String _nameFor(String userId) {
     for (final user in _users) {
@@ -264,15 +768,189 @@ class _DashboardPageState extends State<DashboardPage> {
     return 'Non renseigné';
   }
 
+  Future<void> _showMoreDestinations(
+    List<NavigationDestination> destinations,
+  ) async {
+    final selectedPage = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            for (var index = 4; index < destinations.length; index++)
+              ListTile(
+                leading: destinations[index].icon,
+                title: Text(destinations[index].label),
+                onTap: () => Navigator.pop(context, index),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selectedPage != null && mounted) {
+      setState(() => _selectedIndex = selectedPage);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
     final isPatient = _user.role == StaffRole.patient;
+    final isSecretary = _user.role == StaffRole.secretary;
+    final isPharmacist = _user.role == StaffRole.pharmacist;
     final isAdmin = _user.role == StaffRole.administrator;
+    final isDoctor = _user.role == StaffRole.doctor;
+    final doctorServices = isDoctor
+        ? _assignedServicesFor(_user)
+        : const <HospitalService>[];
+    final doctorHasService = doctorServices.isNotEmpty;
+    final doctorHasOperations = doctorServices.any(
+      (service) => service.hasOperations,
+    );
+    final operationServiceIds = doctorServices
+        .where((service) => service.hasOperations)
+        .map((service) => service.id)
+        .toSet();
+    final pendingAppointments = _appointments
+        .where((appointment) => appointment.status == AppointmentStatus.pending)
+        .length;
+    final overdueAppointments = _appointments
+        .where((appointment) => appointment.isOverdue)
+        .length;
     final nextShift =
         _shifts.where((shift) => shift.end.isAfter(DateTime.now())).toList()
           ..sort((left, right) => left.start.compareTo(right.start));
     final pages = isPatient
-        ? <Widget>[PatientHomeTab(user: _user), PatientProfileTab(user: _user)]
+        ? <Widget>[
+            PatientHomeTab(
+              user: _user,
+              appointments: _appointments,
+              onBookAppointment: _createAppointment,
+              onOpenAppointments: () => setState(() => _selectedIndex = 2),
+              onOpenFollowUps: (type) => setState(() {
+                _followUpType = type;
+                _selectedIndex = 1;
+              }),
+              onOpenProfile: () => setState(() => _selectedIndex = 3),
+              onShowAppointmentDetails: _showPatientAppointmentDetails,
+              onEditAppointment: _editAppointment,
+              onCancelAppointment: _confirmCancelAppointment,
+              onOpenDirections: _openDirections,
+              onContactHospital: _contactHospital,
+              onEmergency: _showEmergencyInfo,
+              notifications: _notifications,
+              onMarkNotificationsRead: _markNotificationsRead,
+              onRespondToProposal: _respondToProposal,
+            ),
+            PatientFollowUpsTab(
+              appointments: _appointments,
+              initialType: _followUpType,
+              isArabic: _user.language == 'ar',
+              onSelectAppointments: (_) => setState(() => _selectedIndex = 2),
+            ),
+            AppointmentsTab(
+              appointments: _appointments,
+              isPatient: true,
+              isArabic: _user.language == 'ar',
+              onEdit: _editAppointment,
+              onStatusChange: _updateAppointmentStatus,
+              onRespondProposal: _respondToProposal,
+            ),
+            PatientProfileTab(
+              user: _user,
+              onSave: _updatePatientProfile,
+              onSignOut: () => _signOut(),
+              onSwitchRole: _showRoleSwitcher,
+            ),
+          ]
+        : isPharmacist
+        ? <Widget>[
+            PharmacyTab(user: _user),
+            PatientProfileTab(
+              user: _user,
+              onSave: _updatePatientProfile,
+              onSignOut: () => _signOut(),
+              onSwitchRole: _showRoleSwitcher,
+            ),
+          ]
+        : isDoctor
+        ? <Widget>[
+            DoctorHomeTab(
+              user: _user,
+              services: _services,
+              appointments: _appointments,
+              interventions: _interventions,
+              shifts: _shifts,
+              handovers: _handovers,
+              onOpenPlanning: () => setState(() => _selectedIndex = 1),
+              onHandoverTap: _showHandoverDetails,
+            ),
+            DoctorPlanningTab(
+              appointments: _appointments,
+              interventions: _interventions,
+              shifts: _shifts,
+              hasService: doctorHasService,
+              hasOperations: doctorHasOperations,
+              operationServiceIds: operationServiceIds,
+            ),
+            DoctorServiceTab(
+              user: _user,
+              services: _services,
+              colleagues: _colleagues,
+            ),
+            HandoversTab(
+              handovers: _handovers,
+              onHandoverTap: _showHandoverDetails,
+            ),
+            PatientProfileTab(
+              user: _user,
+              onSave: _updatePatientProfile,
+              onSignOut: () => _signOut(),
+              isDoctorProfile: true,
+              doctorServices: doctorServices,
+              onSwitchRole: _showRoleSwitcher,
+            ),
+            HospitalTab(
+              canManage: false,
+              user: _user,
+              isVisible: _selectedIndex == 5,
+              hospitalsApi: HospitalResourceService(),
+              services: _services,
+              users: _users,
+              useMockData: _useMockHospitalData,
+            ),
+          ]
+        : isSecretary
+        ? <Widget>[
+            SecretaryHomeTab(
+              userName: _user.displayName.isEmpty
+                  ? _user.email
+                  : _user.displayName,
+              pendingCount: pendingAppointments,
+              overdueCount: overdueAppointments,
+              onOpenAppointments: () => setState(() => _selectedIndex = 1),
+            ),
+            AppointmentsTab(
+              appointments: _appointments,
+              isPatient: false,
+              onEdit: _editAppointment,
+              onStatusChange: _updateAppointmentStatus,
+              onClaim: _claimAppointment,
+              onRelease: _releaseAppointment,
+              onDecision: _decideAppointment,
+              currentUserId: _user.id,
+            ),
+            HospitalTab(
+              canManage: false,
+              isVisible: _selectedIndex == 2,
+              hospitalsApi: HospitalResourceService(),
+              services: _services,
+              users: const [],
+              user: _user,
+              useMockData: _useMockHospitalData,
+            ),
+          ]
         : <Widget>[
             HomeTab(
               user: _user,
@@ -293,6 +971,15 @@ class _DashboardPageState extends State<DashboardPage> {
               handovers: _handovers,
               onHandoverTap: _showHandoverDetails,
             ),
+            HospitalTab(
+              canManage: isAdmin,
+              isVisible: _selectedIndex == 4,
+              hospitalsApi: HospitalResourceService(),
+              services: _services,
+              users: _users,
+              user: _user,
+              useMockData: _useMockHospitalData,
+            ),
             if (isAdmin)
               AdminTab(
                 usersCount: _users.length,
@@ -302,8 +989,67 @@ class _DashboardPageState extends State<DashboardPage> {
                 onAddShift: _addShift,
                 onAddService: _addService,
               ),
+            if (isAdmin)
+              AppointmentsTab(
+                appointments: _appointments,
+                isPatient: false,
+                onEdit: _editAppointment,
+                onStatusChange: _updateAppointmentStatus,
+                onClaim: _claimAppointment,
+                onRelease: _releaseAppointment,
+                onDecision: _decideAppointment,
+                currentUserId: _user.id,
+                isAdmin: true,
+              ),
           ];
+    final isArabic = isPatient && _user.language == 'ar';
     final destinations = isPatient
+        ? isArabic
+              ? const <NavigationDestination>[
+                  NavigationDestination(
+                    icon: Icon(Icons.home_outlined),
+                    selectedIcon: Icon(Icons.home),
+                    label: 'الرئيسية',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.monitor_heart_outlined),
+                    selectedIcon: Icon(Icons.monitor_heart),
+                    label: 'متابعتي',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.calendar_month_outlined),
+                    selectedIcon: Icon(Icons.calendar_month),
+                    label: 'مواعيدي',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.person_outline),
+                    selectedIcon: Icon(Icons.person),
+                    label: 'ملفي',
+                  ),
+                ]
+              : const <NavigationDestination>[
+                  NavigationDestination(
+                    icon: Icon(Icons.home_outlined),
+                    selectedIcon: Icon(Icons.home),
+                    label: 'Accueil',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.monitor_heart_outlined),
+                    selectedIcon: Icon(Icons.monitor_heart),
+                    label: 'Mes suivis',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.calendar_month_outlined),
+                    selectedIcon: Icon(Icons.calendar_month),
+                    label: 'Mes RDV',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.person_outline),
+                    selectedIcon: Icon(Icons.person),
+                    label: 'Mon profil',
+                  ),
+                ]
+        : isSecretary
         ? const <NavigationDestination>[
             NavigationDestination(
               icon: Icon(Icons.home_outlined),
@@ -311,9 +1057,27 @@ class _DashboardPageState extends State<DashboardPage> {
               label: 'Accueil',
             ),
             NavigationDestination(
+              icon: Icon(Icons.event_available_outlined),
+              selectedIcon: Icon(Icons.event_available),
+              label: 'Rendez-vous',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.apartment_outlined),
+              selectedIcon: Icon(Icons.apartment),
+              label: 'Hôpital',
+            ),
+          ]
+        : isPharmacist
+        ? const <NavigationDestination>[
+            NavigationDestination(
+              icon: Icon(Icons.medication_outlined),
+              selectedIcon: Icon(Icons.medication),
+              label: 'Pharmacie',
+            ),
+            NavigationDestination(
               icon: Icon(Icons.person_outline),
               selectedIcon: Icon(Icons.person),
-              label: 'Mon profil',
+              label: 'Profil',
             ),
           ]
         : <NavigationDestination>[
@@ -335,7 +1099,18 @@ class _DashboardPageState extends State<DashboardPage> {
             const NavigationDestination(
               icon: Icon(Icons.forum_outlined),
               selectedIcon: Icon(Icons.forum_rounded),
-              label: 'Transmissions',
+              label: 'Relèves',
+            ),
+            if (isDoctor)
+              const NavigationDestination(
+                icon: Icon(Icons.person_outline),
+                selectedIcon: Icon(Icons.person),
+                label: 'Profil',
+              ),
+            const NavigationDestination(
+              icon: Icon(Icons.apartment_outlined),
+              selectedIcon: Icon(Icons.apartment),
+              label: 'Hôpital',
             ),
             if (isAdmin)
               const NavigationDestination(
@@ -343,176 +1118,169 @@ class _DashboardPageState extends State<DashboardPage> {
                 selectedIcon: Icon(Icons.admin_panel_settings),
                 label: 'Admin',
               ),
+            if (isAdmin)
+              const NavigationDestination(
+                icon: Icon(Icons.event_available_outlined),
+                selectedIcon: Icon(Icons.event_available),
+                label: 'Rendez-vous',
+              ),
           ];
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          isPatient
-              ? (_selectedIndex == 0 ? 'Espace patient' : 'Mon profil')
-              : _titles[_selectedIndex],
-        ),
-        foregroundColor: AppColors.navy,
-        backgroundColor: AppColors.background,
-        actions: [
-          if (!isPatient)
-            IconButton(
-              tooltip: 'Actualiser',
-              onPressed: _isLoading ? null : _load,
-              icon: const Icon(Icons.refresh),
+    final hasMoreDestinations = destinations.length > 5;
+    final visibleDestinations = hasMoreDestinations
+        ? <NavigationDestination>[
+            ...destinations.take(4),
+            const NavigationDestination(
+              icon: Icon(Icons.more_horiz),
+              selectedIcon: Icon(Icons.more_horiz),
+              label: 'Plus',
             ),
-          IconButton(
-            tooltip: 'Se déconnecter',
-            onPressed: _signOut,
-            icon: const Icon(Icons.logout_rounded),
-          ),
-        ],
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(_error!, textAlign: TextAlign.center),
-                    const SizedBox(height: 12),
-                    FilledButton.icon(
-                      onPressed: _load,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Réessayer'),
+          ]
+        : destinations;
+    final visibleSelectedIndex = hasMoreDestinations && _selectedIndex >= 4
+        ? 4
+        : _selectedIndex;
+    final titles = isPatient
+        ? isArabic
+              ? const ['مساحة المريض', 'متابعتي', 'مواعيدي', 'ملفي']
+              : const ['Accueil', 'Mes suivis', 'Mes RDV', 'Profil']
+        : isPharmacist
+        ? const ['Gestion Pharmacie', 'Profil']
+        : isDoctor
+        ? const [
+            'Accueil',
+            'Planning',
+            'Service',
+            'Transmissions',
+            'Profil',
+            'Ressources hospitalières',
+          ]
+        : isSecretary
+        ? const ['Espace secrétaire', 'Rendez-vous', 'Ressources hospitalières']
+        : [..._titles, if (isAdmin) 'Rendez-vous'];
+    final hospitalPageIndex = isPharmacist
+        ? -1
+        : isSecretary
+        ? 2
+        : isDoctor
+        ? 5
+        : !isPatient && !isDoctor
+        ? 4
+        : -1;
+    final isOnHospitalPage = _selectedIndex == hospitalPageIndex;
+    return Directionality(
+      textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
+        appBar: AppBar(
+          title: screenWidth < 220
+              ? null
+              : Text(
+                  titles[_selectedIndex],
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+          foregroundColor: AppColors.navy,
+          backgroundColor: AppColors.background,
+          actions: [
+            if (!isPatient && !isOnHospitalPage && screenWidth >= 360)
+              IconButton(
+                tooltip: 'Actualiser',
+                onPressed: _isLoading ? null : _load,
+                icon: const Icon(Icons.refresh),
+              ),
+            if (_user.assignedRoles.length > 1 && screenWidth >= 360)
+              IconButton(
+                tooltip: 'Changer de rôle',
+                onPressed: _isSwitchingRole ? null : _showRoleSwitcher,
+                icon: const Icon(Icons.switch_account_outlined),
+              ),
+            if (screenWidth >= 360)
+              IconButton(
+                tooltip: 'Se déconnecter',
+                onPressed: () => _signOut(),
+                icon: const Icon(Icons.logout_rounded),
+              )
+            else if (screenWidth >= 220)
+              PopupMenuButton<String>(
+                tooltip: 'Actions',
+                onSelected: (action) {
+                  if (action == 'refresh') _load();
+                  if (action == 'role') _showRoleSwitcher();
+                  if (action == 'logout') _signOut();
+                },
+                itemBuilder: (_) => [
+                  if (_user.assignedRoles.length > 1)
+                    const PopupMenuItem(
+                      value: 'role',
+                      child: Text('Changer de rôle'),
                     ),
-                  ],
-                ),
+                  if (!isPatient && !isOnHospitalPage)
+                    const PopupMenuItem(
+                      value: 'refresh',
+                      child: Text('Actualiser'),
+                    ),
+                  const PopupMenuItem(
+                    value: 'logout',
+                    child: Text('Se déconnecter'),
+                  ),
+                ],
               ),
-            )
-          : IndexedStack(index: _selectedIndex, children: pages),
-      floatingActionButton: !isPatient && _selectedIndex == 3
-          ? FloatingActionButton.extended(
-              onPressed: _addHandover,
-              backgroundColor: AppColors.blue,
-              foregroundColor: Colors.white,
-              icon: const Icon(Icons.add),
-              label: const Text('Nouvelle note'),
-            )
-          : !isPatient && isAdmin && _selectedIndex == 1
-          ? FloatingActionButton.extended(
-              onPressed: _addShift,
-              backgroundColor: AppColors.blue,
-              foregroundColor: Colors.white,
-              icon: const Icon(Icons.add),
-              label: const Text('Ajouter une garde'),
-            )
-          : null,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) =>
-            setState(() => _selectedIndex = index),
-        destinations: destinations,
+          ],
+        ),
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_error!, textAlign: TextAlign.center),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed: _load,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Réessayer'),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            : IndexedStack(index: _selectedIndex, children: pages),
+        floatingActionButton:
+            !isPatient &&
+                _user.role != StaffRole.secretary &&
+                _selectedIndex == 3
+            ? FloatingActionButton.extended(
+                onPressed: _addHandover,
+                backgroundColor: AppColors.blue,
+                foregroundColor: Colors.white,
+                icon: const Icon(Icons.add),
+                label: const Text('Nouvelle note'),
+              )
+            : !isPatient && isAdmin && _selectedIndex == 1
+            ? FloatingActionButton.extended(
+                onPressed: _addShift,
+                backgroundColor: AppColors.blue,
+                foregroundColor: Colors.white,
+                icon: const Icon(Icons.add),
+                label: const Text('Ajouter une garde'),
+              )
+            : null,
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: visibleSelectedIndex,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+          onDestinationSelected: (index) {
+            if (hasMoreDestinations && index == 4) {
+              _showMoreDestinations(destinations);
+            } else {
+              setState(() => _selectedIndex = index);
+            }
+          },
+          destinations: visibleDestinations,
+        ),
       ),
-    );
-  }
-}
-
-class PatientHomeTab extends StatelessWidget {
-  const PatientHomeTab({super.key, required this.user});
-
-  final StaffUser user;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Container(
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-            color: AppColors.navy,
-            borderRadius: BorderRadius.circular(22),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Bienvenue sur HôpitalConnect',
-                style: TextStyle(color: Colors.white70, fontSize: 15),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                user.displayName.isEmpty ? user.email : user.displayName,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 25,
-                  height: 1.2,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        InfoCard(
-          icon: Icons.email_outlined,
-          title: 'Adresse e-mail',
-          value: user.email,
-          color: AppColors.blue,
-        ),
-        const SizedBox(height: 12),
-        InfoCard(
-          icon: Icons.verified_user_outlined,
-          title: 'Type de compte',
-          value: 'Patient',
-          color: AppColors.mint,
-        ),
-        const SizedBox(height: 20),
-        const Text(
-          'Votre espace patient est limité à votre compte. Les fonctions de planning et de coordination du personnel ne sont pas accessibles.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Color(0xFF687B86), height: 1.5),
-        ),
-      ],
-    );
-  }
-}
-
-class PatientProfileTab extends StatelessWidget {
-  const PatientProfileTab({super.key, required this.user});
-
-  final StaffUser user;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        const SectionIntro(
-          title: 'Mon profil',
-          subtitle: 'Informations de votre compte',
-        ),
-        const SizedBox(height: 16),
-        InfoCard(
-          icon: Icons.person_outline,
-          title: 'Nom',
-          value: user.displayName,
-          color: AppColors.blue,
-        ),
-        const SizedBox(height: 12),
-        InfoCard(
-          icon: Icons.email_outlined,
-          title: 'Adresse e-mail',
-          value: user.email,
-          color: AppColors.mint,
-        ),
-        const SizedBox(height: 12),
-        InfoCard(
-          icon: Icons.verified_user_outlined,
-          title: 'Rôle',
-          value: user.role.label,
-          color: const Color(0xFF8797A0),
-        ),
-      ],
     );
   }
 }
@@ -609,3 +1377,6 @@ class HomeTab extends StatelessWidget {
     );
   }
 }
+
+String _appointmentDateTime(DateTime value) =>
+    '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year} · ${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';

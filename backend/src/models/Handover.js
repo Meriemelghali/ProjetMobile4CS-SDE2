@@ -6,6 +6,7 @@ const handoverSchema = new mongoose.Schema({
   title: { type: String, required: true, trim: true, maxlength: 160 },
   content: { type: String, required: true, trim: true, maxlength: 5000 },
   important: { type: Boolean, default: false },
+  readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   createdAt: { type: Date, default: Date.now, immutable: true },
 }, { timestamps: true });
 

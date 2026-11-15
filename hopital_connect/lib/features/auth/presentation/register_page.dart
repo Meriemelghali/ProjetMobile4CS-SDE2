@@ -60,7 +60,7 @@ class _RegisterPageState extends State<RegisterPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Créer un compte patient'),
+        title: const Text('Créer un compte'),
         foregroundColor: AppColors.navy,
         backgroundColor: AppColors.background,
       ),

@@ -8,6 +8,7 @@ class Handover {
     required this.createdAt,
     required this.author,
     this.important = false,
+    this.isRead = false,
   });
 
   final String id;
@@ -18,6 +19,19 @@ class Handover {
   final DateTime createdAt;
   final String author;
   final bool important;
+  final bool isRead;
+
+  Handover copyWith({bool? isRead}) => Handover(
+    id: id,
+    serviceId: serviceId,
+    authorId: authorId,
+    title: title,
+    message: message,
+    createdAt: createdAt,
+    author: author,
+    important: important,
+    isRead: isRead ?? this.isRead,
+  );
 
   String get time {
     final local = createdAt.toLocal();
@@ -44,6 +58,7 @@ class Handover {
           ? (authorValue['username'] ?? authorValue['name']) as String? ?? ''
           : json['authorName'] as String? ?? '',
       important: json['important'] as bool? ?? false,
+      isRead: json['isRead'] as bool? ?? false,
     );
   }
 

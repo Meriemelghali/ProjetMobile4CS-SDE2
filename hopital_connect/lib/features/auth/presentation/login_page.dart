@@ -4,6 +4,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/network/api_client.dart';
 import '../data/auth_service.dart';
 import '../../dashboard/presentation/dashboard_page.dart';
+import 'role_selection_page.dart';
 import 'register_page.dart';
 
 class LoginPage extends StatefulWidget {
@@ -31,14 +32,25 @@ class _LoginPageState extends State<LoginPage> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSigningIn = true);
     try {
-      final session = await AuthService().login(
+      final result = await AuthService().login(
         _emailController.text.trim(),
         _passwordController.text,
       );
       if (!mounted) return;
+      if (result.requiresRoleSelection) {
+        await Navigator.of(context).pushReplacement<void, void>(
+          MaterialPageRoute<void>(
+            builder: (_) => RoleSelectionPage(
+              user: result.user,
+              selectionToken: result.selectionToken!,
+            ),
+          ),
+        );
+        return;
+      }
       await Navigator.of(context).pushReplacement(
         MaterialPageRoute<void>(
-          builder: (_) => DashboardPage(session: session),
+          builder: (_) => DashboardPage(session: result.session!),
         ),
       );
     } on ApiException catch (error) {
@@ -163,7 +175,7 @@ class _LoginPageState extends State<LoginPage> {
                           const SizedBox(height: 8),
                           TextButton(
                             onPressed: _isSigningIn ? null : _openRegistration,
-                            child: const Text('Créer un compte patient'),
+                            child: const Text('Créer un compte'),
                           ),
                           const SizedBox(height: 24),
                           FilledButton.icon(
