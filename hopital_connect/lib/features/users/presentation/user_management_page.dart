@@ -6,6 +6,8 @@ import '../../services/data/service_service.dart';
 import '../../services/domain/hospital_service.dart';
 import '../../hospital/data/hospital_resource_service.dart';
 import '../../hospital/domain/hospital_resources.dart';
+import '../../pharmacy/data/pharmacy_service.dart';
+import '../../pharmacy/domain/pharmacy_models.dart';
 import '../data/user_service.dart';
 import '../domain/staff_role.dart';
 import '../domain/staff_user.dart';
@@ -23,6 +25,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
   List<StaffUser> _users = const [];
   List<HospitalService> _services = const [];
   List<Hospital> _hospitals = const [];
+  List<Pharmacy> _pharmacies = const [];
   bool _isLoading = true;
   String? _error;
 
@@ -52,12 +55,14 @@ class _UserManagementPageState extends State<UserManagementPage> {
         widget.service.list(),
         ServiceService().list(),
         HospitalResourceService().hospitals(),
+        PharmacyService().pharmacies(),
       ]);
       if (mounted) {
         setState(() {
           _users = results[0] as List<StaffUser>;
           _services = results[1] as List<HospitalService>;
           _hospitals = results[2] as List<Hospital>;
+          _pharmacies = results[3] as List<Pharmacy>;
         });
       }
     } on ApiException catch (error) {
@@ -74,6 +79,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
         services: _services,
         hospitals: _hospitals,
         specialties: _existingSpecialties,
+        pharmacies: _pharmacies,
       ),
     );
     if (input == null || !mounted) return;
@@ -89,6 +95,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
         serviceIds: input.serviceIds,
         specialty: input.specialty,
         photoUrl: input.photoUrl,
+        pharmacyId: input.pharmacyId,
       );
       if (mounted) setState(() => _users = [..._users, user]);
     } on ApiException catch (error) {
@@ -104,6 +111,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
         services: _services,
         hospitals: _hospitals,
         specialties: _existingSpecialties,
+        pharmacies: _pharmacies,
       ),
     );
     if (edited == null || !mounted) return;
@@ -130,6 +138,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
       role: user.role,
       roles: user.assignedRoles,
       hospitalId: user.hospitalId,
+      pharmacyId: user.pharmacyId,
       serviceId: user.serviceId,
       serviceIds: user.serviceIds,
       specialty: user.specialty,
@@ -262,6 +271,7 @@ class _NewUserInput {
     required this.specialty,
     required this.photoUrl,
     this.serviceId,
+    this.pharmacyId,
     this.password,
   });
 
@@ -271,6 +281,7 @@ class _NewUserInput {
   final List<StaffRole> roles;
   final String? hospitalId;
   final String? serviceId;
+  final String? pharmacyId;
   final List<String> serviceIds;
   final String specialty;
   final String photoUrl;
@@ -282,12 +293,14 @@ class _UserDialog extends StatefulWidget {
     required this.services,
     required this.hospitals,
     required this.specialties,
+    required this.pharmacies,
     this.user,
   });
 
   final List<HospitalService> services;
   final List<Hospital> hospitals;
   final List<String> specialties;
+  final List<Pharmacy> pharmacies;
   final StaffUser? user;
 
   @override
@@ -314,6 +327,7 @@ class _UserDialogState extends State<_UserDialog> {
     widget.user?.assignedRoles ?? [StaffRole.nurse],
   );
   late String? _hospitalId = widget.user?.hospitalId;
+  late String? _pharmacyId = widget.user?.pharmacyId;
   late String? _managerServiceId =
       widget.user?.serviceId ??
       (widget.user?.serviceIds.isNotEmpty == true
@@ -385,6 +399,12 @@ class _UserDialogState extends State<_UserDialog> {
       );
       return;
     }
+    if (_roles.contains(StaffRole.pharmacist) && _pharmacyId == null) {
+      setState(
+        () => _assignmentError = 'Choisissez une pharmacie pour le pharmacien.',
+      );
+      return;
+    }
     final serviceIds =
         _roles.contains(StaffRole.doctor) ||
             _roles.contains(StaffRole.secretary)
@@ -406,6 +426,7 @@ class _UserDialogState extends State<_UserDialog> {
           role: _primaryRole,
           roles: _roles.toList(),
           hospitalId: _hospitalId,
+          pharmacyId: _pharmacyId,
           serviceId: serviceId,
           serviceIds: serviceIds,
           specialty: _selectedSpecialty ?? '',
@@ -421,6 +442,7 @@ class _UserDialogState extends State<_UserDialog> {
           role: _primaryRole,
           roles: _roles.toList(),
           hospitalId: _hospitalId,
+          pharmacyId: _pharmacyId,
           serviceId: serviceId,
           serviceIds: serviceIds,
           specialty: _selectedSpecialty ?? '',
@@ -639,6 +661,40 @@ class _UserDialogState extends State<_UserDialog> {
                           value == null ? 'Choisissez un service.' : null,
                     ),
                   ],
+                ],
+                if (_roles.contains(StaffRole.pharmacist)) ...[
+                  const SizedBox(height: 12),
+                  if (widget.pharmacies.isEmpty)
+                    const Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Text(
+                        'Aucune pharmacie disponible. Redémarrez l’API pour créer la pharmacie par défaut.',
+                        style: TextStyle(color: Colors.red),
+                      ),
+                    ),
+                  DropdownButtonFormField<String>(
+                    initialValue:
+                        widget.pharmacies.any((item) => item.id == _pharmacyId)
+                        ? _pharmacyId
+                        : null,
+                    decoration: const InputDecoration(labelText: 'Pharmacie'),
+                    items: widget.pharmacies
+                        .map(
+                          (item) => DropdownMenuItem(
+                            value: item.id,
+                            child: Text(item.name),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: widget.pharmacies.isEmpty
+                        ? null
+                        : (value) => setState(() {
+                            _pharmacyId = value;
+                            _assignmentError = null;
+                          }),
+                    validator: (value) =>
+                        value == null ? 'Choisissez une pharmacie.' : null,
+                  ),
                 ],
                 if (_assignmentError != null)
                   Align(

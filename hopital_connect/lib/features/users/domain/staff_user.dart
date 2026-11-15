@@ -8,6 +8,7 @@ class StaffUser {
     required this.role,
     this.roles = const [],
     this.hospitalId,
+    this.pharmacyId,
     this.serviceId,
     this.serviceIds = const [],
     this.specialty = '',
@@ -32,6 +33,7 @@ class StaffUser {
   final StaffRole role;
   final List<StaffRole> roles;
   final String? hospitalId;
+  final String? pharmacyId;
   final String? serviceId;
   final List<String> serviceIds;
   final String specialty;
@@ -54,6 +56,7 @@ class StaffUser {
   factory StaffUser.fromJson(Map<String, dynamic> json) {
     final service = json['serviceId'];
     final hospital = json['hospitalId'];
+    final pharmacy = json['pharmacyId'];
     final serviceValues = json['serviceIds'];
     final preferences = json['notificationPreferences'];
     final notificationPreferences = preferences is Map<String, dynamic>
@@ -94,6 +97,11 @@ class StaffUser {
           : hospital is Map<String, dynamic>
           ? _id(hospital['_id'] ?? hospital['id'])
           : hospital.toString(),
+      pharmacyId: pharmacy == null
+          ? null
+          : pharmacy is Map<String, dynamic>
+          ? _id(pharmacy['_id'] ?? pharmacy['id'])
+          : pharmacy.toString(),
       serviceId: service == null
           ? null
           : service is Map<String, dynamic>
@@ -126,6 +134,7 @@ class StaffUser {
     'role': role.apiValue,
     'roles': assignedRoles.map((item) => item.apiValue).toList(),
     'hospitalId': hospitalId,
+    'pharmacyId': pharmacyId,
     'serviceId': serviceId,
     'serviceIds': serviceIds,
     'specialty': specialty,
