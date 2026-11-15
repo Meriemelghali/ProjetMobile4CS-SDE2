@@ -22,4 +22,18 @@ class ShiftService {
     final response = await _api.post('/shifts', body: shift.toJson());
     return Shift.fromJson(response['shift'] as Map<String, dynamic>);
   }
+
+  Future<Shift> update(Shift shift) async {
+    if (shift.id.isEmpty) throw const ApiException('Identifiant manquant.');
+    final response = await _api.put(
+      '/shifts/${shift.id}',
+      body: shift.toJson(),
+    );
+    return Shift.fromJson(response['shift'] as Map<String, dynamic>);
+  }
+
+  Future<void> delete(String id) async {
+    if (id.isEmpty) throw const ApiException('Identifiant manquant.');
+    await _api.delete('/shifts/$id');
+  }
 }

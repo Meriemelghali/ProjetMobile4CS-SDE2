@@ -30,13 +30,24 @@ class _UserManagementPageState extends State<UserManagementPage> {
   String? _error;
 
   List<String> get _existingSpecialties {
-    final specialties = _users
-        .map((user) => user.specialty.trim())
-        .where((specialty) => specialty.isNotEmpty)
-        .toSet()
-        .toList();
-    specialties.sort();
-    return specialties;
+    final specialties = <String>{
+      ..._users
+          .map((user) => user.specialty.trim())
+          .where((specialty) => specialty.isNotEmpty),
+      ..._services
+          .where(
+            (service) =>
+                service.isActive &&
+                service.name.trim().toLowerCase() != 'médecin' &&
+                (service.serviceType == ServiceType.medical ||
+                    (service.serviceType == ServiceType.medicoTechnical &&
+                        service.name.toLowerCase().contains('radiolog'))),
+          )
+          .map((service) => service.name.trim())
+          .where((specialty) => specialty.isNotEmpty),
+    };
+    final values = specialties.toList()..sort();
+    return values;
   }
 
   @override
@@ -94,7 +105,6 @@ class _UserManagementPageState extends State<UserManagementPage> {
         serviceId: input.serviceId,
         serviceIds: input.serviceIds,
         specialty: input.specialty,
-        photoUrl: input.photoUrl,
         pharmacyId: input.pharmacyId,
       );
       if (mounted) setState(() => _users = [..._users, user]);
@@ -269,7 +279,6 @@ class _NewUserInput {
     this.hospitalId,
     required this.serviceIds,
     required this.specialty,
-    required this.photoUrl,
     this.serviceId,
     this.pharmacyId,
     this.password,
@@ -284,7 +293,6 @@ class _NewUserInput {
   final String? pharmacyId;
   final List<String> serviceIds;
   final String specialty;
-  final String photoUrl;
   final String? password;
 }
 
@@ -320,9 +328,6 @@ class _UserDialogState extends State<_UserDialog> {
       widget.user?.specialty.trim().isNotEmpty == true
       ? widget.user!.specialty.trim()
       : null;
-  late final _photoUrlController = TextEditingController(
-    text: widget.user?.photoUrl ?? '',
-  );
   late Set<StaffRole> _roles = Set.of(
     widget.user?.assignedRoles ?? [StaffRole.nurse],
   );
@@ -343,11 +348,24 @@ class _UserDialogState extends State<_UserDialog> {
     return values;
   }
 
+  HospitalService? get _doctorService => widget.services
+      .where((service) => service.name.trim().toLowerCase() == 'médecin')
+      .firstOrNull;
+
+  List<HospitalService> get _secretaryServices => widget.services
+      .where((service) => service.name.trim().toLowerCase() != 'médecin')
+      .toList();
+
   late final Set<String> _assignedServiceIds = {
-    if (widget.user != null) ...widget.user!.serviceIds,
-    if (widget.user != null &&
+    if (widget.user?.assignedRoles.contains(StaffRole.secretary) == true)
+      for (final service in _secretaryServices)
+        if (widget.user!.serviceIds.contains(service.id)) service.id,
+    if (widget.user?.assignedRoles.contains(StaffRole.secretary) == true &&
         widget.user!.serviceIds.isEmpty &&
-        widget.user!.serviceId != null)
+        widget.user!.serviceId != null &&
+        _secretaryServices.any(
+          (service) => service.id == widget.user!.serviceId,
+        ))
       widget.user!.serviceId!,
   };
 
@@ -367,13 +385,20 @@ class _UserDialogState extends State<_UserDialog> {
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
-    _photoUrlController.dispose();
     super.dispose();
   }
 
   void _save() {
     if (!_formKey.currentState!.validate() || _roles.isEmpty) return;
-    if (_roles.contains(StaffRole.secretary) && _assignedServiceIds.isEmpty) {
+    final isDoctor = _roles.contains(StaffRole.doctor);
+    final isSecretary = _roles.contains(StaffRole.secretary);
+    if (isDoctor && _doctorService == null) {
+      setState(
+        () => _assignmentError = 'Le service automatique « Médecin » est introuvable. Actualisez les services.',
+      );
+      return;
+    }
+    if (isSecretary && _assignedServiceIds.isEmpty) {
       setState(
         () =>
             _assignmentError = 'Affectez au moins un service à la secrétaire.',
@@ -405,16 +430,16 @@ class _UserDialogState extends State<_UserDialog> {
       );
       return;
     }
-    final serviceIds =
-        _roles.contains(StaffRole.doctor) ||
-            _roles.contains(StaffRole.secretary)
+    final serviceIds = isSecretary
         ? _assignedServiceIds.toList()
+        : isDoctor
+        ? [_doctorService!.id]
         : const <String>[];
     final serviceId = _roles.contains(StaffRole.serviceHead)
         ? _managerServiceId
-        : (_roles.contains(StaffRole.doctor) ||
-                  _roles.contains(StaffRole.secretary)) &&
-              serviceIds.isNotEmpty
+        : isDoctor
+        ? _doctorService!.id
+        : isSecretary && serviceIds.isNotEmpty
         ? serviceIds.first
         : null;
     if (widget.user case final user?) {
@@ -430,7 +455,7 @@ class _UserDialogState extends State<_UserDialog> {
           serviceId: serviceId,
           serviceIds: serviceIds,
           specialty: _selectedSpecialty ?? '',
-          photoUrl: _photoUrlController.text.trim(),
+          photoUrl: user.photoUrl,
           isActive: user.isActive,
         ),
       );
@@ -446,7 +471,6 @@ class _UserDialogState extends State<_UserDialog> {
           serviceId: serviceId,
           serviceIds: serviceIds,
           specialty: _selectedSpecialty ?? '',
-          photoUrl: _photoUrlController.text.trim(),
           password: _passwordController.text,
         ),
       );
@@ -527,7 +551,14 @@ class _UserDialogState extends State<_UserDialog> {
                                   _roles = {..._roles, role};
                                 } else {
                                   _roles = {..._roles}..remove(role);
+                                  if (role == StaffRole.doctor) {
+                                    _selectedSpecialty = null;
+                                  }
+                                  if (role == StaffRole.secretary) {
+                                    _assignedServiceIds.clear();
+                                  }
                                 }
+                                _assignmentError = null;
                               });
                               field.didChange(_roles);
                             },
@@ -560,17 +591,18 @@ class _UserDialogState extends State<_UserDialog> {
                         ? 'Choisissez une spécialité existante.'
                         : null,
                   ),
-                  TextFormField(
-                    controller: _photoUrlController,
-                    maxLength: 500,
-                    keyboardType: TextInputType.url,
-                    decoration: const InputDecoration(
-                      labelText: 'URL de la photo',
+                  const Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Les spécialités proposées incluent les services médicaux actifs. '
+                        'Le service du médecin reste automatiquement « Médecin ».',
+                      ),
                     ),
                   ),
                 ],
-                if (_roles.contains(StaffRole.doctor) ||
-                    _roles.contains(StaffRole.secretary)) ...[
+                if (_roles.contains(StaffRole.secretary)) ...[
                   const SizedBox(height: 12),
                   const Align(
                     alignment: AlignmentDirectional.centerStart,
@@ -579,29 +611,36 @@ class _UserDialogState extends State<_UserDialog> {
                       style: TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
-                  if (widget.services.isEmpty &&
-                      _roles.contains(StaffRole.secretary))
+                  if (_secretaryServices.isEmpty)
                     const Text('Créez un service avant l’affectation.')
-                  else if (widget.services.isEmpty)
-                    const Text('Aucun service disponible.')
                   else
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        for (final service in widget.services)
-                          FilterChip(
-                            label: Text(service.name),
-                            selected: _assignedServiceIds.contains(service.id),
-                            onSelected: (selected) => setState(() {
-                              if (selected) {
-                                _assignedServiceIds.add(service.id);
-                              } else {
-                                _assignedServiceIds.remove(service.id);
-                              }
-                              _assignmentError = null;
-                            }),
-                          ),
-                      ],
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Wrap(
+                        alignment: WrapAlignment.start,
+                        spacing: 8,
+                        children: [
+                          for (final service in _secretaryServices)
+                            FilterChip(
+                              label: Text(service.name),
+                              selected: _assignedServiceIds.contains(
+                                service.id,
+                              ),
+                              showCheckmark: true,
+                              selectedColor: AppColors.blue.withValues(
+                                alpha: 0.18,
+                              ),
+                              onSelected: (selected) => setState(() {
+                                if (selected) {
+                                  _assignedServiceIds.add(service.id);
+                                } else {
+                                  _assignedServiceIds.remove(service.id);
+                                }
+                                _assignmentError = null;
+                              }),
+                            ),
+                        ],
+                      ),
                     ),
                 ],
                 if (_roles.contains(StaffRole.serviceHead) ||

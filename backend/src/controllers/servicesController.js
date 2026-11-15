@@ -32,7 +32,9 @@ const FIELDS = [
 function serviceResponse(service) {
   return {
     _id:          service._id,
-    name:         service.name,
+    name:         service.name === 'Chirurgie général'
+      ? 'Chirurgie générale'
+      : service.name,
     location:     service.location,
     description:  service.description,
     active:       service.active,

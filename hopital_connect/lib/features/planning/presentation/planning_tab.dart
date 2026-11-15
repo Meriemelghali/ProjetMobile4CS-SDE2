@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/widgets.dart';
 import '../../services/domain/hospital_service.dart';
+import '../../users/domain/staff_role.dart';
 import '../../users/domain/staff_user.dart';
 import '../domain/shift.dart';
 
@@ -54,10 +55,12 @@ class NewShiftDialog extends StatefulWidget {
     super.key,
     required this.services,
     required this.users,
+    this.shift,
   });
 
   final List<HospitalService> services;
   final List<StaffUser> users;
+  final Shift? shift;
 
   @override
   State<NewShiftDialog> createState() => _NewShiftDialogState();
@@ -65,17 +68,47 @@ class NewShiftDialog extends StatefulWidget {
 
 class _NewShiftDialogState extends State<NewShiftDialog> {
   final _formKey = GlobalKey<FormState>();
-  DateTime _date = DateTime.now();
-  TimeOfDay _start = const TimeOfDay(hour: 7, minute: 0);
-  TimeOfDay _end = const TimeOfDay(hour: 15, minute: 0);
-  late StaffUser _user = widget.users.first;
-  late HospitalService _service = widget.services.first;
+  late DateTime _date = widget.shift?.start.toLocal() ?? DateTime.now();
+  late TimeOfDay _start = widget.shift == null
+      ? const TimeOfDay(hour: 7, minute: 0)
+      : TimeOfDay.fromDateTime(widget.shift!.start.toLocal());
+  late TimeOfDay _end = widget.shift == null
+      ? const TimeOfDay(hour: 15, minute: 0)
+      : TimeOfDay.fromDateTime(widget.shift!.end.toLocal());
+  List<StaffUser> get _doctors => widget.users
+      .where(
+        (user) =>
+            (user.role == StaffRole.doctor ||
+                user.assignedRoles.contains(StaffRole.doctor)) &&
+            user.specialty.trim().isNotEmpty,
+      )
+      .toList();
+  late StaffUser _user = _doctors.firstWhere(
+    (user) => user.id == widget.shift?.userId,
+    orElse: () => _doctors.first,
+  );
+  HospitalService? _serviceForDoctor(StaffUser doctor) {
+    final specialty = doctor.specialty.trim().toLowerCase();
+    return widget.services
+        .where(
+          (service) =>
+              service.isActive &&
+              service.name.trim().toLowerCase() == specialty,
+        )
+        .firstOrNull;
+  }
+
+  late HospitalService? _service = _serviceForDoctor(_user);
 
   Future<void> _chooseDate() async {
+    final initialDate = DateTime(_date.year, _date.month, _date.day);
+    final earliestDate = DateTime.now().subtract(const Duration(days: 1));
     final selected = await showDatePicker(
       context: context,
-      initialDate: _date,
-      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      initialDate: initialDate,
+      firstDate: initialDate.isBefore(earliestDate)
+          ? initialDate
+          : earliestDate,
       lastDate: DateTime.now().add(const Duration(days: 365)),
       helpText: 'Choisir le jour de la garde',
     );
@@ -118,6 +151,17 @@ class _NewShiftDialogState extends State<NewShiftDialog> {
 
   void _save() {
     if (!_formKey.currentState!.validate()) return;
+    final service = _service;
+    if (service == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Aucun service actif ne correspond à la spécialité du médecin.',
+          ),
+        ),
+      );
+      return;
+    }
     final startMinutes = _start.hour * 60 + _start.minute;
     final endMinutes = _end.hour * 60 + _end.minute;
     if (endMinutes <= startMinutes) {
@@ -144,14 +188,14 @@ class _NewShiftDialogState extends State<NewShiftDialog> {
     );
     Navigator.of(context).pop(
       Shift(
-        id: '',
+        id: widget.shift?.id ?? '',
         userId: _user.id,
-        serviceId: _service.id,
+        serviceId: service.id,
         start: start,
         end: end,
-        role: _user.role.label,
+        role: StaffRole.doctor.label,
         userName: _user.displayName,
-        serviceName: _service.name,
+        serviceName: service.name,
       ),
     );
   }
@@ -159,7 +203,9 @@ class _NewShiftDialogState extends State<NewShiftDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Ajouter une garde'),
+      title: Text(
+        widget.shift == null ? 'Ajouter une garde' : 'Modifier la garde',
+      ),
       content: SizedBox(
         width: 420,
         child: Form(
@@ -170,30 +216,41 @@ class _NewShiftDialogState extends State<NewShiftDialog> {
               children: [
                 DropdownButtonFormField<StaffUser>(
                   initialValue: _user,
-                  decoration: const InputDecoration(labelText: 'Personnel'),
+                  decoration: const InputDecoration(labelText: 'Médecin'),
                   items: [
-                    for (final user in widget.users)
+                    for (final user in _doctors)
                       DropdownMenuItem(
                         value: user,
-                        child: Text('${user.displayName} · ${user.role.label}'),
+                        child: Text('${user.displayName} · ${user.specialty}'),
                       ),
                   ],
                   onChanged: (value) {
-                    if (value != null) setState(() => _user = value);
+                    if (value != null) {
+                      setState(() {
+                        _user = value;
+                        _service = _serviceForDoctor(value);
+                      });
+                    }
                   },
                 ),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<HospitalService>(
-                  initialValue: _service,
-                  decoration: const InputDecoration(labelText: 'Service'),
-                  items: [
-                    for (final service in widget.services)
-                      DropdownMenuItem(value: service, child: Text(service.name)),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) setState(() => _service = value);
-                  },
+                InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Spécialité du médecin',
+                    border: OutlineInputBorder(),
+                  ),
+                  child: Text(_user.specialty),
                 ),
+                if (_service == null)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Text(
+                        'Aucun service actif ne correspond à cette spécialité.',
+                      ),
+                    ),
+                  ),
                 const SizedBox(height: 8),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
@@ -261,57 +318,57 @@ class ShiftCard extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
       child: Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE5ECEF)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 4,
-            height: 60,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(8),
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFE5ECEF)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 4,
+              height: 60,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  day,
-                  style: const TextStyle(
-                    color: AppColors.navy,
-                    fontWeight: FontWeight.w700,
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    day,
+                    style: const TextStyle(
+                      color: AppColors.navy,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(role, style: const TextStyle(color: Color(0xFF687B86))),
-                const SizedBox(height: 4),
-                Text(
-                  service,
-                  style: const TextStyle(
-                    color: Color(0xFF8797A0),
-                    fontSize: 12,
+                  const SizedBox(height: 4),
+                  Text(role, style: const TextStyle(color: Color(0xFF687B86))),
+                  const SizedBox(height: 4),
+                  Text(
+                    service,
+                    style: const TextStyle(
+                      color: Color(0xFF8797A0),
+                      fontSize: 12,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          Text(
-            time,
-            style: TextStyle(
-              color: color,
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
+            Text(
+              time,
+              style: TextStyle(
+                color: color,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-          ),
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }
