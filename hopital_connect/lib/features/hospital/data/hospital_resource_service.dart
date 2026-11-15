@@ -52,6 +52,14 @@ class HospitalResourceService {
   Future<HospitalBed> updateBed(HospitalBed bed) =>
       _update('/beds', 'bed', bed.id, bed.toJson(), HospitalBed.fromJson);
 
+  Future<HospitalBed> updateBedStatus(String bedId, BedStatus status) async {
+    final response = await _api.put(
+      '/beds/$bedId',
+      body: {'status': status.name},
+    );
+    return _item(response, 'bed', HospitalBed.fromJson);
+  }
+
   Future<HospitalBed> assignBed(String bedId, String patientId) async {
     final response = await _api.put(
       '/beds/$bedId/assignment',
@@ -84,6 +92,17 @@ class HospitalResourceService {
 
   Future<void> deleteOperatingRoom(String id) =>
       _delete('/operating-rooms/$id');
+
+  Future<OperatingRoom> updateOperatingRoomStatus(
+    String roomId,
+    OperatingRoomStatus status,
+  ) async {
+    final response = await _api.put(
+      '/operating-rooms/$roomId',
+      body: {'status': status.apiValue},
+    );
+    return _item(response, 'operatingRoom', OperatingRoom.fromJson);
+  }
 
   Future<List<HospitalEquipment>> equipment() =>
       _list('/equipment', 'equipment', HospitalEquipment.fromJson);

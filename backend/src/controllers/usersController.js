@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const Service = require('../models/Service');
+const Hospital = require('../models/Hospital');
 const { HttpError } = require('../errors');
 const { hashPassword } = require('../services/auth');
 const { userResponse } = require('./authController');
@@ -17,6 +18,7 @@ const {
 
 const CREATE_FIELDS = [
   'username', 'email', 'password', 'role', 'roles', 'serviceId', 'serviceIds',
+  'hospitalId',
   'specialty', 'photoUrl', 'active',
 ];
 const UPDATE_FIELDS = CREATE_FIELDS;
@@ -53,6 +55,9 @@ function parseUserFields(body, { creating = false } = {}) {
     if (body.serviceIds !== undefined && !Array.isArray(body.serviceIds)) {
       throw new HttpError(400, 'serviceIds must be an array.');
     }
+    if (creating || body.hospitalId !== undefined) {
+      result.hospitalId = body.hospitalId ?? null;
+    }
     const values = body.serviceIds || [];
     if (values.length > 50) throw new HttpError(400, 'serviceIds cannot contain more than 50 services.');
     result.serviceIds = [...new Set(values.map((value) => requireId(value, 'serviceIds item')))];
@@ -80,8 +85,88 @@ async function validateServiceIds(serviceIds) {
   return serviceIds;
 }
 
+async function validateHospital(hospitalId) {
+  if (hospitalId === null) return null;
+  const id = requireId(hospitalId, 'hospitalId');
+  if (!(await Hospital.exists({ _id: id }))) {
+    throw new HttpError(400, 'hospitalId does not exist.');
+  }
+  return id;
+}
+
+async function validateResourceAssignments(fields, roles) {
+  fields.hospitalId = await validateHospital(fields.hospitalId);
+  const hasServiceManager = roles.includes('service_head');
+  const hasBlockManager = roles.includes('operating_room_manager');
+  if (hasServiceManager && (!fields.serviceId || !fields.hospitalId)) {
+    throw new HttpError(400, 'A service manager must be assigned to a hospital and service.');
+  }
+  if (hasBlockManager && !fields.hospitalId) {
+    throw new HttpError(400, 'An operating room manager must be assigned to a hospital.');
+  }
+  if (hasServiceManager &&
+      !(await Hospital.exists({
+        _id: fields.hospitalId,
+        serviceIds: fields.serviceId,
+      }))) {
+    throw new HttpError(400, 'serviceId must belong to hospitalId.');
+  }
+  if (fields.hospitalId && fields.serviceId &&
+      !(await Hospital.exists({
+        _id: fields.hospitalId,
+        serviceIds: fields.serviceId,
+      }))) {
+    throw new HttpError(400, 'serviceId must belong to hospitalId.');
+  }
+}
+
 async function list(_req, res) {
   const users = await User.find().sort({ username: 1 }).limit(200);
+  return res.json({ users: users.map(userResponse) });
+}
+
+async function listAssignablePatients(_req, res) {
+  const patients = await User.find({ role: 'patient', active: true })
+    .select('username role active')
+    .sort({ username: 1 })
+    .limit(500);
+  return res.json({
+    users: patients.map((user) => ({
+      _id: user._id,
+      username: user.username,
+      role: user.role,
+      active: user.active,
+    })),
+  });
+}
+
+async function listInterventionParticipants(req, res) {
+  const serviceIds = [
+    ...(req.user.serviceIds || []).map((id) => id.toString()),
+    ...(req.user.serviceId ? [req.user.serviceId.toString()] : []),
+  ];
+  const doctorQuery = req.user.role === 'doctor'
+    ? { _id: req.user._id }
+    : req.user.role === 'secretary'
+    ? {
+        $or: [
+          { serviceId: { $in: serviceIds } },
+          { serviceIds: { $in: serviceIds } },
+        ],
+      }
+    : {};
+  const users = await User.find({
+    active: true,
+    $or: [
+      {
+        $and: [
+          doctorQuery,
+          { $or: [{ role: 'doctor' }, { roles: 'doctor' }] },
+        ],
+      },
+      { role: 'patient' },
+    ],
+  }).sort({ username: 1 }).limit(500);
   return res.json({ users: users.map(userResponse) });
 }
 
@@ -137,6 +222,7 @@ async function create(req, res) {
   const fields = parseUserFields(body, { creating: true });
   fields.serviceId = await validateService(fields.serviceId);
   fields.serviceIds = await validateServiceIds(fields.serviceIds);
+  await validateResourceAssignments(fields, fields.roles);
   const hasServiceRole = fields.roles.includes('secretary') ||
     fields.roles.includes('doctor');
   if (hasServiceRole) {
@@ -177,8 +263,30 @@ async function update(req, res) {
       (currentUser.roles?.length
           ? currentUser.roles
           : [fields.role || currentUser.role]);
+  const assignmentFields = {
+    hospitalId: fields.hospitalId === undefined
+      ? currentUser.hospitalId || null
+      : fields.hospitalId,
+    serviceId: fields.serviceId === undefined
+      ? currentUser.serviceId || null
+      : fields.serviceId,
+  };
+  if (assignedRoles.includes('service_head') &&
+      !assignmentFields.hospitalId &&
+      assignmentFields.serviceId) {
+    const hospitals = await Hospital.find({
+      serviceIds: assignmentFields.serviceId,
+    }).select('_id').limit(2);
+    if (hospitals.length === 1) assignmentFields.hospitalId = hospitals[0]._id;
+  }
+  await validateResourceAssignments(assignmentFields, assignedRoles);
+  if (fields.hospitalId !== undefined || assignedRoles.includes('service_head') ||
+      assignedRoles.includes('operating_room_manager')) {
+    fields.hospitalId = assignmentFields.hospitalId;
+  }
   const hasServiceRole = assignedRoles.includes('secretary') ||
-    assignedRoles.includes('doctor');
+    assignedRoles.includes('doctor') ||
+    assignedRoles.includes('service_head');
   if (hasServiceRole) {
     if (fields.serviceIds === undefined &&
         fields.serviceId !== undefined &&
@@ -230,4 +338,11 @@ async function update(req, res) {
   return res.json({ user: userResponse(user) });
 }
 
-module.exports = { list, listServiceMembers, create, update };
+module.exports = {
+  list,
+  listAssignablePatients,
+  listInterventionParticipants,
+  listServiceMembers,
+  create,
+  update,
+};

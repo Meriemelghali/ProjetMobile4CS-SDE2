@@ -12,11 +12,21 @@ const operatingRoomSchema = new mongoose.Schema({
   serviceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Service', default: null },
   name: { type: String, required: true, trim: true, maxlength: 100 },
   number: { type: Number, required: true, min: 1, validate: Number.isInteger },
-  status: { type: String, required: true, enum: ['free', 'in_progress', 'sterilization'], default: 'free' },
+  status: {
+    type: String,
+    required: true,
+    enum: ['free', 'in_progress', 'sterilization', 'maintenance'],
+    default: 'free',
+  },
   schedule: { type: [scheduleEntrySchema], default: [] },
 }, { timestamps: true });
 
-operatingRoomSchema.index({ hospitalId: 1, number: 1 }, { unique: true });
+// Room numbers may repeat in different operating blocks, but not inside
+// the same block of the same hospital.
+operatingRoomSchema.index(
+  { hospitalId: 1, name: 1, number: 1 },
+  { unique: true },
+);
 
 module.exports = mongoose.models.OperatingRoom
   || mongoose.model('OperatingRoom', operatingRoomSchema);

@@ -5,10 +5,16 @@ const { authorize } = require('../middleware/authorize');
 
 const router = express.Router();
 router.use(authenticate);
-router.get('/', authorize('admin', 'doctor', 'nurse', 'secretary', 'service_head'), controller.listRooms);
-router.post('/', authorize('admin'), controller.createRoom);
-router.get('/:id/occupancy', authorize('admin', 'doctor', 'nurse', 'secretary', 'service_head'), controller.roomOccupancy);
-router.put('/:id', authorize('admin'), controller.updateRoom);
-router.delete('/:id', authorize('admin'), controller.deleteRoom);
+router.get('/', authorize(
+  'admin', 'doctor', 'nurse', 'secretary', 'service_head',
+  'operating_room_manager',
+), controller.listRooms);
+router.post('/', authorize('admin', 'service_head'), controller.createRoom);
+router.get('/:id/occupancy', authorize(
+  'admin', 'doctor', 'nurse', 'secretary', 'service_head',
+  'operating_room_manager',
+), controller.roomOccupancy);
+router.put('/:id', authorize('admin', 'service_head'), controller.updateRoom);
+router.delete('/:id', authorize('admin', 'service_head'), controller.deleteRoom);
 
 module.exports = router;

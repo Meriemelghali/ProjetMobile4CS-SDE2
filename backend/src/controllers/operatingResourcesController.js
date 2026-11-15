@@ -6,6 +6,12 @@ const User = require('../models/User');
 const Service = require('../models/Service');
 const { HttpError } = require('../errors');
 const {
+  assertHospitalScope,
+  assertServiceScope,
+  hospitalIdFor,
+  serviceIdFor,
+} = require('../middleware/resourceAccess');
+const {
   requireDate,
   requireId,
   requireObject,
@@ -16,10 +22,35 @@ const {
 const INTERVENTION_STATUSES = ['scheduled', 'in_progress', 'completed', 'cancelled'];
 const ACTIVE_STATUSES = ['scheduled', 'in_progress'];
 const EQUIPMENT_STATUSES = ['functional', 'broken', 'maintenance'];
-const OPERATING_ROOM_STATUSES = ['free', 'in_progress', 'sterilization'];
+const OPERATING_ROOM_STATUSES = ['free', 'in_progress', 'sterilization', 'maintenance'];
 
 function idOf(value) {
   return value?._id || value || null;
+}
+
+function assignedServiceIds(user) {
+  return [
+    ...(user.serviceIds || []).map((id) => id.toString()),
+    ...(user.serviceId ? [user.serviceId.toString()] : []),
+  ];
+}
+
+async function assertInterventionScope(user, room, surgeonId) {
+  if (user.role === 'admin') return;
+  const roomServiceId = idOf(room.serviceId)?.toString();
+  if (!roomServiceId || !assignedServiceIds(user).includes(roomServiceId)) {
+    throw new HttpError(403, 'The operating room is outside your assigned services.');
+  }
+  if (user.hospitalId && String(user.hospitalId) !== String(room.hospitalId)) {
+    throw new HttpError(403, 'The operating room is outside your hospital.');
+  }
+  const service = await Service.findById(room.serviceId).select('a_operations');
+  if (!service?.a_operations) {
+    throw new HttpError(403, 'Operating interventions are not enabled for this service.');
+  }
+  if (user.role === 'doctor' && String(surgeonId) !== String(user._id)) {
+    throw new HttpError(403, 'A doctor can only schedule their own interventions.');
+  }
 }
 
 function hasScheduleConflict(schedule, start, end, excludingId = null) {
@@ -47,10 +78,10 @@ function interventionResponse(intervention) {
   return {
     _id: intervention._id,
     surgeonId: idOf(intervention.surgeonId),
+    surgeonName: intervention.surgeonId?.displayName || '',
     patientId: idOf(intervention.patientId),
     operatingRoomId: idOf(intervention.operatingRoomId),
     operatingRoomName: intervention.operatingRoomId?.name || '',
-    serviceId: idOf(intervention.operatingRoomId?.serviceId),
     serviceId: idOf(intervention.operatingRoomId?.serviceId),
     equipmentIds: (intervention.equipmentIds || []).map(idOf),
     title: intervention.title,
@@ -120,6 +151,21 @@ async function validateOperatingRoomFields(fields, current = null) {
 async function listOperatingRooms(req, res) {
   const query = {};
   if (req.query.hospitalId !== undefined) query.hospitalId = requireId(req.query.hospitalId, 'hospitalId');
+  if (req.user.role === 'service_head') {
+    const serviceId = serviceIdFor(req.user);
+    const hospitalId = hospitalIdFor(req.user);
+    if (!serviceId || !hospitalId) {
+      throw new HttpError(403, 'A hospital and service assignment are required.');
+    }
+    if (query.hospitalId) assertHospitalScope(req.user, query.hospitalId);
+    query.hospitalId = hospitalId;
+    query.serviceId = serviceId;
+  } else if (req.user.role === 'operating_room_manager') {
+    const hospitalId = hospitalIdFor(req.user);
+    if (!hospitalId) throw new HttpError(403, 'A hospital assignment is required.');
+    if (query.hospitalId) assertHospitalScope(req.user, query.hospitalId);
+    query.hospitalId = hospitalId;
+  }
   const rooms = await OperatingRoom.find(query).sort({ number: 1 }).limit(200);
   return res.json({ operatingRooms: rooms.map(operatingRoomResponse) });
 }
@@ -128,6 +174,7 @@ async function createOperatingRoom(req, res) {
   const body = requireObject(req.body);
   rejectUnknownFields(body, ['hospitalId', 'serviceId', 'name', 'number', 'status']);
   const fields = parseOperatingRoomFields(body, true);
+  assertHospitalScope(req.user, fields.hospitalId);
   await validateOperatingRoomFields(fields);
   const room = await OperatingRoom.create(fields);
   return res.status(201).json({ operatingRoom: operatingRoomResponse(room) });
@@ -139,11 +186,36 @@ async function updateOperatingRoom(req, res) {
   rejectUnknownFields(body, ['hospitalId', 'serviceId', 'name', 'number', 'status']);
   const current = await OperatingRoom.findById(id);
   if (!current) throw new HttpError(404, 'Operating room not found.');
+  if (req.user.role === 'nurse') {
+    rejectUnknownFields(body, ['status']);
+    if (body.status === undefined) {
+      throw new HttpError(400, 'Only an operating room status change is allowed.');
+    }
+    const serviceIds = new Set([
+      ...(req.user.serviceIds || []).map(String),
+      ...(req.user.serviceId ? [String(req.user.serviceId)] : []),
+    ]);
+    const service = current.serviceId
+      ? await Service.findById(current.serviceId).select('a_operations')
+      : null;
+    if (!current.serviceId || !serviceIds.has(String(current.serviceId)) ||
+        service?.a_operations !== true) {
+      throw new HttpError(403, 'Operating room is outside your assigned services.');
+    }
+  } else {
+    assertHospitalScope(req.user, current.hospitalId);
+  }
   const fields = parseOperatingRoomFields(body);
+  if (req.user.role !== 'nurse') {
+    assertHospitalScope(
+      req.user,
+      fields.hospitalId === undefined ? current.hospitalId : fields.hospitalId,
+    );
+  }
   if (!Object.keys(fields).length) throw new HttpError(400, 'At least one field must be provided.');
   await validateOperatingRoomFields(fields, current);
   const updateQuery = { _id: id };
-  if (fields.status === 'sterilization' || fields.status === 'free') {
+  if (['sterilization', 'free', 'maintenance'].includes(fields.status)) {
     updateQuery.schedule = {
       $not: { $elemMatch: { status: { $in: ACTIVE_STATUSES } } },
     };
@@ -162,6 +234,7 @@ async function deleteOperatingRoom(req, res) {
   const id = requireId(req.params.id, 'operating room id');
   const room = await OperatingRoom.findById(id);
   if (!room) throw new HttpError(404, 'Operating room not found.');
+  assertHospitalScope(req.user, room.hospitalId);
   if (await Intervention.exists({ operatingRoomId: id })) {
     throw new HttpError(409, 'Remove interventions before deleting the operating room.');
   }
@@ -171,6 +244,22 @@ async function deleteOperatingRoom(req, res) {
 
 async function listInterventions(req, res) {
   const query = {};
+  let allowedOperatingRoomIds = null;
+  if (req.user.role === 'operating_room_manager') {
+    const hospitalId = hospitalIdFor(req.user);
+    if (!hospitalId) throw new HttpError(403, 'A hospital assignment is required.');
+    const rooms = await OperatingRoom.find({ hospitalId }).select('_id');
+    allowedOperatingRoomIds = new Set(rooms.map((room) => String(room._id)));
+  }
+  if (req.user.role === 'service_head') {
+    const serviceId = serviceIdFor(req.user);
+    const hospitalId = hospitalIdFor(req.user);
+    if (!serviceId || !hospitalId) {
+      throw new HttpError(403, 'A hospital and service assignment are required.');
+    }
+    const rooms = await OperatingRoom.find({ hospitalId, serviceId }).select('_id');
+    allowedOperatingRoomIds = new Set(rooms.map((room) => String(room._id)));
+  }
   if (req.user.role === 'doctor') {
     if (req.query.surgeonId !== undefined &&
         requireId(req.query.surgeonId, 'surgeonId') !== req.user._id.toString()) {
@@ -192,7 +281,19 @@ async function listInterventions(req, res) {
           serviceId: { $in: enabledServices.map((service) => service._id) },
         }).select('_id')
       : [];
-    query.operatingRoomId = { $in: rooms.map((room) => room._id) };
+    allowedOperatingRoomIds = new Set(rooms.map((room) => String(room._id)));
+  }
+  if (req.user.role === 'secretary') {
+    const serviceIds = assignedServiceIds(req.user);
+    const enabledServices = serviceIds.length
+      ? await Service.find({ _id: { $in: serviceIds }, a_operations: true }).select('_id')
+      : [];
+    const rooms = enabledServices.length
+      ? await OperatingRoom.find({
+          serviceId: { $in: enabledServices.map((service) => service._id) },
+        }).select('_id')
+      : [];
+    allowedOperatingRoomIds = new Set(rooms.map((room) => String(room._id)));
   }
   if (req.query.surgeonId !== undefined) {
     const surgeonId = requireId(req.query.surgeonId, 'surgeonId');
@@ -202,7 +303,13 @@ async function listInterventions(req, res) {
     query.patientId = requireId(req.query.patientId, 'patientId');
   }
   if (req.query.operatingRoomId !== undefined) {
-    query.operatingRoomId = requireId(req.query.operatingRoomId, 'operatingRoomId');
+    const operatingRoomId = requireId(req.query.operatingRoomId, 'operatingRoomId');
+    if (allowedOperatingRoomIds && !allowedOperatingRoomIds.has(operatingRoomId)) {
+      throw new HttpError(403, 'Operating room is outside your assigned scope.');
+    }
+    query.operatingRoomId = operatingRoomId;
+  } else if (allowedOperatingRoomIds) {
+    query.operatingRoomId = { $in: [...allowedOperatingRoomIds] };
   }
   if (req.query.status !== undefined) {
     if (!INTERVENTION_STATUSES.includes(req.query.status)) {
@@ -212,6 +319,7 @@ async function listInterventions(req, res) {
   }
   const interventions = await Intervention.find(query)
     .populate('operatingRoomId', 'name serviceId')
+    .populate('surgeonId', 'displayName')
     .sort({ start: 1 })
     .limit(500);
   return res.json({ interventions: interventions.map(interventionResponse) });
@@ -407,6 +515,7 @@ async function createIntervention(req, res) {
 
   const room = await OperatingRoom.findById(operatingRoomId);
   if (!room) throw new HttpError(400, 'operatingRoomId does not exist.');
+  await assertInterventionScope(req.user, room, surgeonId);
   if (room.status === 'sterilization') throw new HttpError(409, 'Operating room is in sterilization.');
   const equipmentIds = await validateInterventionEquipment(
     body.equipmentIds || [], room, ACTIVE_STATUSES.includes(status),
@@ -439,7 +548,8 @@ async function createIntervention(req, res) {
       status,
     });
     await setOperatingRoomStatus(operatingRoomId);
-    await intervention.populate('operatingRoomId', 'name');
+    await intervention.populate('operatingRoomId', 'name serviceId');
+    await intervention.populate('surgeonId', 'displayName');
     return res.status(201).json({ intervention: interventionResponse(intervention) });
   } catch (error) {
     await OperatingRoom.updateOne(
@@ -497,6 +607,11 @@ async function updateIntervention(req, res) {
   const roomId = idOf(current.operatingRoomId);
   const room = await OperatingRoom.findById(roomId);
   if (!room) throw new HttpError(409, 'The intervention operating room no longer exists.');
+  await assertInterventionScope(
+    req.user,
+    room,
+    fields.surgeonId || current.surgeonId,
+  );
   if (room.status === 'sterilization' && ACTIVE_STATUSES.includes(status)) {
     throw new HttpError(409, 'Operating room is in sterilization.');
   }
@@ -529,7 +644,7 @@ async function updateIntervention(req, res) {
     );
     const intervention = await Intervention.findByIdAndUpdate(
       id, { $set: fields }, { new: true, runValidators: true },
-    ).populate('operatingRoomId', 'name');
+    ).populate('operatingRoomId', 'name serviceId').populate('surgeonId', 'displayName');
     if (!intervention) {
       throw new HttpError(404, 'Intervention not found.');
     }
@@ -642,6 +757,27 @@ async function listEquipment(req, res) {
     }
     query.status = req.query.status;
   }
+  if (req.user.role === 'service_head') {
+    const serviceId = serviceIdFor(req.user);
+    const hospitalId = hospitalIdFor(req.user);
+    if (!serviceId || !hospitalId) {
+      throw new HttpError(403, 'A hospital and service assignment are required.');
+    }
+    if (query.hospitalId) assertHospitalScope(req.user, query.hospitalId);
+    query.hospitalId = hospitalId;
+    query.serviceId = serviceId;
+    query.operatingRoomId = null;
+  } else if (req.user.role === 'operating_room_manager') {
+    const hospitalId = hospitalIdFor(req.user);
+    if (!hospitalId) throw new HttpError(403, 'A hospital assignment is required.');
+    if (query.hospitalId && String(query.hospitalId) !== hospitalId) {
+      assertHospitalScope(req.user, query.hospitalId);
+    }
+    const rooms = await OperatingRoom.find({ hospitalId }).select('_id');
+    query.hospitalId = hospitalId;
+    query.operatingRoomId = { $in: rooms.map((room) => room._id) };
+    query.serviceId = null;
+  }
   const equipment = await Equipment.find(query).select('+assetTag').sort({ name: 1 }).limit(500);
   return res.json({ equipment: equipment.map(equipmentResponse) });
 }
@@ -655,6 +791,7 @@ async function createEquipment(req, res) {
   rejectUnknownFields(body, allowed);
   const fields = parseEquipmentFields(body, true);
   await validateEquipmentLocation(fields);
+  await assertEquipmentScope(req.user, fields);
   const equipment = await Equipment.create({ ...fields, assetTag: fields.serialNumber });
   return res.status(201).json({ equipment: equipmentResponse(equipment) });
 }
@@ -669,10 +806,20 @@ async function updateEquipment(req, res) {
   rejectUnknownFields(body, allowed);
   const current = await Equipment.findById(id).select('+assetTag');
   if (!current) throw new HttpError(404, 'Equipment not found.');
+  await assertEquipmentScope(req.user, current);
   const fields = parseEquipmentFields(body);
   if (!Object.keys(fields).length) throw new HttpError(400, 'At least one field must be provided.');
   if (fields.serialNumber !== undefined) fields.assetTag = fields.serialNumber;
   await validateEquipmentLocation(fields, current);
+  await assertEquipmentScope(req.user, {
+    ...current.toObject(),
+    ...fields,
+    hospitalId: fields.hospitalId || current.hospitalId,
+    serviceId: fields.serviceId === undefined ? current.serviceId : fields.serviceId,
+    operatingRoomId: fields.operatingRoomId === undefined
+      ? current.operatingRoomId
+      : fields.operatingRoomId,
+  });
   const nextStatus = fields.status || current.status;
   const assignmentChanged = (fields.serviceId !== undefined
       && String(fields.serviceId || '') !== String(idOf(current.serviceId) || ''))
@@ -714,6 +861,9 @@ async function updateMaintenance(req, res) {
   const body = requireObject(req.body);
   rejectUnknownFields(body, ['status', 'lastMaintenanceAt', 'maintenanceDueAt']);
   const update = parseMaintenanceUpdate(body);
+  const current = await Equipment.findById(id);
+  if (!current) throw new HttpError(404, 'Equipment not found.');
+  await assertEquipmentScope(req.user, current);
   const updateQuery = { _id: id };
   if (update.$set.status && update.$set.status !== 'functional') {
     updateQuery.schedule = { $not: { $elemMatch: { status: { $in: ACTIVE_STATUSES } } } };
@@ -741,6 +891,28 @@ async function deleteEquipment(req, res) {
   const equipment = await Equipment.findByIdAndDelete(id).select('+assetTag');
   if (!equipment) throw new HttpError(404, 'Equipment not found.');
   return res.json({ equipment: equipmentResponse(equipment) });
+}
+
+async function assertEquipmentScope(user, equipment) {
+  if (user.role === 'admin') return;
+  if (user.role === 'service_head') {
+    if (equipment.operatingRoomId) {
+      throw new HttpError(403, 'Equipment is outside your service.');
+    }
+    assertServiceScope(user, equipment.serviceId, equipment.hospitalId);
+    return;
+  }
+  if (user.role === 'operating_room_manager') {
+    if (equipment.serviceId || !equipment.operatingRoomId) {
+      throw new HttpError(403, 'Only operating room equipment is in your scope.');
+    }
+    const room = await OperatingRoom.findById(equipment.operatingRoomId).select('hospitalId');
+    if (!room) throw new HttpError(400, 'operatingRoomId does not exist.');
+    assertHospitalScope(user, equipment.hospitalId);
+    assertHospitalScope(user, room.hospitalId);
+    return;
+  }
+  throw new HttpError(403, 'Action is not authorized.');
 }
 
 module.exports = {

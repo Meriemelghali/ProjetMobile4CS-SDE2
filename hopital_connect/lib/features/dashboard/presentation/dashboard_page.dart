@@ -45,6 +45,11 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
+  static const _useMockHospitalData = bool.fromEnvironment(
+    'USE_MOCK_DATA',
+    defaultValue: false,
+  );
+
   int _selectedIndex = 0;
   bool _isLoading = true;
   bool _isSwitchingRole = false;
@@ -63,7 +68,13 @@ class _DashboardPageState extends State<DashboardPage> {
 
   List<HospitalService> get _managedServices =>
       _user.role == StaffRole.serviceHead
-      ? _services.where((service) => service.headUserId == _user.id).toList()
+      ? _services
+            .where(
+              (service) =>
+                  service.id == _user.serviceId ||
+                  service.headUserId == _user.id,
+            )
+            .toList()
       : _services;
 
   Set<String> _serviceIdsFor(StaffUser user) => {
@@ -83,7 +94,7 @@ class _DashboardPageState extends State<DashboardPage> {
     'Mon planning',
     'Mon service',
     'Transmissions',
-    'Hôpital',
+    'Ressources hospitalières',
     'Administration',
   ];
 
@@ -126,11 +137,12 @@ class _DashboardPageState extends State<DashboardPage> {
           AppointmentService().list(),
           AppointmentService().listDoctors(),
           ServiceService().list(),
+          UserService().listInterventionParticipants(),
         ]);
         if (!mounted) return;
         setState(() {
           _user = user;
-          _users = const [];
+          _users = results[3] as List<StaffUser>;
           _services = results[2] as List<HospitalService>;
           _shifts = const [];
           _handovers = const [];
@@ -153,9 +165,11 @@ class _DashboardPageState extends State<DashboardPage> {
       final doctorHasOperations = doctorServices.any(
         (service) => service.hasOperations,
       );
-      final shifts = await ShiftService().list(
-        userId: isAdmin ? null : user.id,
-      );
+      final isOperatingRoomManager =
+          user.role == StaffRole.operatingRoomManager;
+      final shifts = isOperatingRoomManager
+          ? <Shift>[]
+          : await ShiftService().list(userId: isAdmin ? null : user.id);
       String? serviceHeadServiceId;
       if (user.role == StaffRole.serviceHead) {
         for (final service in services) {
@@ -168,15 +182,22 @@ class _DashboardPageState extends State<DashboardPage> {
       final handoverServiceId = isAdmin
           ? null
           : user.serviceId ?? serviceHeadServiceId;
-      final handovers =
-          (user.role == StaffRole.serviceHead ||
-                  user.role == StaffRole.secretary) &&
-              handoverServiceId == null
+      final handovers = isOperatingRoomManager
+          ? <Handover>[]
+          : (user.role == StaffRole.serviceHead ||
+                    user.role == StaffRole.secretary) &&
+                handoverServiceId == null
           ? <Handover>[]
           : await HandoverService().list(
               serviceId: isDoctor ? null : handoverServiceId,
             );
-      final users = isAdmin ? await UserService().list() : const <StaffUser>[];
+      final users = isAdmin
+          ? await UserService().list()
+          : isDoctor || user.role == StaffRole.secretary
+          ? await UserService().listInterventionParticipants()
+          : user.role == StaffRole.nurse || user.role == StaffRole.serviceHead
+          ? await UserService().listAssignablePatients()
+          : const <StaffUser>[];
       final appointments = isAdmin || isDoctor
           ? await AppointmentService().list()
           : const <Appointment>[];
@@ -730,6 +751,31 @@ class _DashboardPageState extends State<DashboardPage> {
     return 'Non renseigné';
   }
 
+  Future<void> _showMoreDestinations(
+    List<NavigationDestination> destinations,
+  ) async {
+    final selectedPage = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            for (var index = 4; index < destinations.length; index++)
+              ListTile(
+                leading: destinations[index].icon,
+                title: Text(destinations[index].label),
+                onTap: () => Navigator.pop(context, index),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selectedPage != null && mounted) {
+      setState(() => _selectedIndex = selectedPage);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
@@ -837,6 +883,15 @@ class _DashboardPageState extends State<DashboardPage> {
               doctorServices: doctorServices,
               onSwitchRole: _showRoleSwitcher,
             ),
+            HospitalTab(
+              canManage: false,
+              user: _user,
+              isVisible: _selectedIndex == 5,
+              hospitalsApi: HospitalResourceService(),
+              services: _services,
+              users: _users,
+              useMockData: _useMockHospitalData,
+            ),
           ]
         : isSecretary
         ? <Widget>[
@@ -864,6 +919,8 @@ class _DashboardPageState extends State<DashboardPage> {
               hospitalsApi: HospitalResourceService(),
               services: _services,
               users: const [],
+              user: _user,
+              useMockData: _useMockHospitalData,
             ),
           ]
         : <Widget>[
@@ -892,6 +949,8 @@ class _DashboardPageState extends State<DashboardPage> {
               hospitalsApi: HospitalResourceService(),
               services: _services,
               users: _users,
+              user: _user,
+              useMockData: _useMockHospitalData,
             ),
             if (isAdmin)
               AdminTab(
@@ -970,8 +1029,8 @@ class _DashboardPageState extends State<DashboardPage> {
               label: 'Accueil',
             ),
             NavigationDestination(
-              icon: Icon(Icons.calendar_month_outlined),
-              selectedIcon: Icon(Icons.calendar_month),
+              icon: Icon(Icons.event_available_outlined),
+              selectedIcon: Icon(Icons.event_available),
               label: 'Rendez-vous',
             ),
             NavigationDestination(
@@ -999,7 +1058,7 @@ class _DashboardPageState extends State<DashboardPage> {
             const NavigationDestination(
               icon: Icon(Icons.forum_outlined),
               selectedIcon: Icon(Icons.forum_rounded),
-              label: 'Transmissions',
+              label: 'Relèves',
             ),
             if (isDoctor)
               const NavigationDestination(
@@ -1007,12 +1066,11 @@ class _DashboardPageState extends State<DashboardPage> {
                 selectedIcon: Icon(Icons.person),
                 label: 'Profil',
               ),
-            if (!isDoctor)
-              const NavigationDestination(
-                icon: Icon(Icons.apartment_outlined),
-                selectedIcon: Icon(Icons.apartment),
-                label: 'Hôpital',
-              ),
+            const NavigationDestination(
+              icon: Icon(Icons.apartment_outlined),
+              selectedIcon: Icon(Icons.apartment),
+              label: 'Hôpital',
+            ),
             if (isAdmin)
               const NavigationDestination(
                 icon: Icon(Icons.admin_panel_settings_outlined),
@@ -1021,21 +1079,50 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
             if (isAdmin)
               const NavigationDestination(
-                icon: Icon(Icons.calendar_month_outlined),
-                selectedIcon: Icon(Icons.calendar_month),
+                icon: Icon(Icons.event_available_outlined),
+                selectedIcon: Icon(Icons.event_available),
                 label: 'Rendez-vous',
               ),
           ];
 
+    final hasMoreDestinations = destinations.length > 5;
+    final visibleDestinations = hasMoreDestinations
+        ? <NavigationDestination>[
+            ...destinations.take(4),
+            const NavigationDestination(
+              icon: Icon(Icons.more_horiz),
+              selectedIcon: Icon(Icons.more_horiz),
+              label: 'Plus',
+            ),
+          ]
+        : destinations;
+    final visibleSelectedIndex = hasMoreDestinations && _selectedIndex >= 4
+        ? 4
+        : _selectedIndex;
     final titles = isPatient
         ? isArabic
               ? const ['مساحة المريض', 'متابعتي', 'مواعيدي', 'ملفي']
               : const ['Accueil', 'Mes suivis', 'Mes RDV', 'Profil']
         : isDoctor
-        ? const ['Accueil', 'Planning', 'Service', 'Transmissions', 'Profil']
+        ? const [
+            'Accueil',
+            'Planning',
+            'Service',
+            'Transmissions',
+            'Profil',
+            'Ressources hospitalières',
+          ]
         : isSecretary
-        ? const ['Espace secrétaire', 'Rendez-vous', 'Hôpital']
+        ? const ['Espace secrétaire', 'Rendez-vous', 'Ressources hospitalières']
         : [..._titles, if (isAdmin) 'Rendez-vous'];
+    final hospitalPageIndex = isSecretary
+        ? 2
+        : isDoctor
+        ? 5
+        : !isPatient && !isDoctor
+        ? 4
+        : -1;
+    final isOnHospitalPage = _selectedIndex == hospitalPageIndex;
     return Directionality(
       textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
       child: Scaffold(
@@ -1050,7 +1137,7 @@ class _DashboardPageState extends State<DashboardPage> {
           foregroundColor: AppColors.navy,
           backgroundColor: AppColors.background,
           actions: [
-            if (!isPatient && screenWidth >= 360)
+            if (!isPatient && !isOnHospitalPage && screenWidth >= 360)
               IconButton(
                 tooltip: 'Actualiser',
                 onPressed: _isLoading ? null : _load,
@@ -1082,7 +1169,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       value: 'role',
                       child: Text('Changer de rôle'),
                     ),
-                  if (!isPatient)
+                  if (!isPatient && !isOnHospitalPage)
                     const PopupMenuItem(
                       value: 'refresh',
                       child: Text('Actualiser'),
@@ -1137,13 +1224,16 @@ class _DashboardPageState extends State<DashboardPage> {
               )
             : null,
         bottomNavigationBar: NavigationBar(
-          selectedIndex: _selectedIndex,
-          labelBehavior: destinations.length > 5
-              ? NavigationDestinationLabelBehavior.onlyShowSelected
-              : NavigationDestinationLabelBehavior.alwaysShow,
-          onDestinationSelected: (index) =>
-              setState(() => _selectedIndex = index),
-          destinations: destinations,
+          selectedIndex: visibleSelectedIndex,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+          onDestinationSelected: (index) {
+            if (hasMoreDestinations && index == 4) {
+              _showMoreDestinations(destinations);
+            } else {
+              setState(() => _selectedIndex = index);
+            }
+          },
+          destinations: visibleDestinations,
         ),
       ),
     );

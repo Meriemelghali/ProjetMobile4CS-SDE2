@@ -20,16 +20,23 @@ const userSchema = new mongoose.Schema({
   role: {
     type: String,
     required: true,
-    enum: ['admin', 'doctor', 'nurse', 'secretary', 'service_head', 'patient'],
+    enum: [
+      'admin', 'doctor', 'nurse', 'secretary', 'service_head',
+      'operating_room_manager', 'patient',
+    ],
   },
   roles: {
     type: [{
       type: String,
-      enum: ['admin', 'doctor', 'nurse', 'secretary', 'service_head', 'patient'],
+      enum: [
+        'admin', 'doctor', 'nurse', 'secretary', 'service_head',
+        'operating_room_manager', 'patient',
+      ],
     }],
     default: undefined,
   },
   serviceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Service', default: null },
+  hospitalId: { type: mongoose.Schema.Types.ObjectId, ref: 'Hospital', default: null },
   serviceIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Service' }],
   specialty: { type: String, trim: true, maxlength: 120, default: '' },
   photoUrl: { type: String, trim: true, maxlength: 500, default: '' },
