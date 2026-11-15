@@ -73,6 +73,14 @@ class _HospitalTabState extends State<HospitalTab>
   bool get _isServiceManager => widget.user?.role == StaffRole.serviceHead;
   bool get _isBlockManager =>
       widget.user?.role == StaffRole.operatingRoomManager;
+  bool _isManagedByCurrentUser(HospitalService service) {
+    final user = widget.user;
+    if (user == null) return false;
+    final hasDoctorRole = user.assignedRoles.contains(StaffRole.doctor);
+    return service.headUserId == user.id ||
+        (!hasDoctorRole && service.id == user.serviceId);
+  }
+
   bool _canChangeThisOperatingRoom(OperatingRoom room) {
     final user = widget.user;
     if (user?.role != StaffRole.nurse) return _canChangeOperatingRoomStatus;
@@ -94,9 +102,8 @@ class _HospitalTabState extends State<HospitalTab>
     final services = widget.useMockData
         ? HospitalDemoData.services
         : widget.services;
-    final serviceId = widget.user?.serviceId;
-    if (_isServiceManager && serviceId != null) {
-      return services.where((service) => service.id == serviceId).toList();
+    if (_isServiceManager) {
+      return services.where(_isManagedByCurrentUser).toList();
     }
     if (_isBlockManager) {
       final hospital = _hospitals.where(
@@ -133,9 +140,14 @@ class _HospitalTabState extends State<HospitalTab>
   @override
   void initState() {
     super.initState();
-    _roomServiceFilterId = widget.user?.role == StaffRole.serviceHead
-        ? widget.user?.serviceId
-        : null;
+    if (widget.user?.role == StaffRole.serviceHead) {
+      final managedServices = widget.services
+          .where(_isManagedByCurrentUser)
+          .toList();
+      if (managedServices.length == 1) {
+        _roomServiceFilterId = managedServices.single.id;
+      }
+    }
     _selectedHospitalId = widget.user?.hospitalId;
     _tabController = TabController(
       length: _visibleTabIndices.length,
@@ -185,15 +197,20 @@ class _HospitalTabState extends State<HospitalTab>
       final beds = widget.useMockData
           ? HospitalDemoData.beds
           : await api.beds();
+      final hasOperatingRoomTab = _visibleTabIndices.contains(2);
       final operatingRooms = widget.useMockData
           ? HospitalDemoData.operatingRooms
-          : await api.operatingRooms();
+          : hasOperatingRoomTab
+          ? await api.operatingRooms()
+          : <OperatingRoom>[];
       final equipment = widget.useMockData
           ? HospitalDemoData.equipment
           : await api.equipment();
       final interventions = widget.useMockData
           ? HospitalDemoData.interventions
-          : await api.interventions();
+          : hasOperatingRoomTab
+          ? await api.interventions()
+          : <HospitalIntervention>[];
       if (!mounted) return;
       setState(() {
         _hospitals = hospitals;
@@ -267,7 +284,8 @@ class _HospitalTabState extends State<HospitalTab>
         room: room,
         hospitals: _hospitals,
         services: _services,
-        lockScope: _isServiceManager,
+        initialHospitalId: _selectedHospitalId,
+        initialServiceId: _roomServiceFilterId,
       ),
     );
     if (result == null || !mounted) return;
@@ -890,9 +908,8 @@ class _HospitalTabState extends State<HospitalTab>
       );
 
   Widget _roomList() {
-    final serviceId = _isServiceManager
-        ? widget.user?.serviceId
-        : _services.any((service) => service.id == _roomServiceFilterId)
+    final serviceId =
+        _services.any((service) => service.id == _roomServiceFilterId)
         ? _roomServiceFilterId
         : null;
     final floors =
@@ -957,7 +974,7 @@ class _HospitalTabState extends State<HospitalTab>
           selectedServiceId: serviceId,
           onServiceChanged: (value) =>
               setState(() => _roomServiceFilterId = value),
-          lockServiceFilter: _isServiceManager,
+          lockServiceFilter: _isServiceManager && _services.length <= 1,
           selectedFloor: floor,
           onFloorChanged: (value) => setState(() => _roomFloorFilter = value),
           onlyAvailable: _onlyAvailableBeds,

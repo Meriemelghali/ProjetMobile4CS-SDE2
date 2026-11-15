@@ -1,8 +1,8 @@
 const User = require('../models/User');
-const Hospital = require('../models/Hospital');
 const { getConfig } = require('../config');
 const { verifyToken } = require('../services/auth');
 const { getUserRoles } = require('../utils/validation');
+const { attachServiceHeadScope } = require('./resourceAccess');
 
 async function authenticate(req, _res, next) {
   const header = req.get('authorization') || '';
@@ -26,10 +26,7 @@ async function authenticate(req, _res, next) {
     return next({ status: 401, message: 'This role is no longer assigned to the account.' });
   }
   user.role = payload.role;
-  if (user.role === 'service_head' && !user.hospitalId && user.serviceId) {
-    const hospital = await Hospital.findOne({ serviceIds: user.serviceId }).select('_id');
-    if (hospital) user.hospitalId = hospital._id;
-  }
+  if (user.role === 'service_head') await attachServiceHeadScope(user);
   req.user = user;
   return next();
 }

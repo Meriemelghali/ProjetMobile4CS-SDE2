@@ -2,6 +2,10 @@ const mongoose = require('mongoose');
 const app = require('./app');
 const { getConfig } = require('./config');
 const { ensureDefaultHospital } = require('./services/defaultHospital');
+const {
+  assignExistingDoctorsToDefaultService,
+  ensureDoctorService,
+} = require('./services/defaultDoctorService');
 const Room = require('./models/Room');
 const OperatingRoom = require('./models/OperatingRoom');
 const { ensureDefaultPharmacy } = require('./services/defaultPharmacy');
@@ -25,6 +29,10 @@ async function start() {
   if (createdDefaultHospital) {
     console.log('Created default hospital "Hôpital principal".');
   }
+  const doctorService = await ensureDoctorService();
+  await assignExistingDoctorsToDefaultService({
+    serviceId: doctorService._id,
+  });
   const createdDefaultPharmacy = await ensureDefaultPharmacy();
   if (createdDefaultPharmacy) {
     console.log('Created default pharmacy "Pharmacie hospitalière".');

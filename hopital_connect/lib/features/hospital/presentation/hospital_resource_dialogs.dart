@@ -93,12 +93,16 @@ class RoomDialog extends StatefulWidget {
     this.room,
     required this.hospitals,
     required this.services,
+    this.initialHospitalId,
+    this.initialServiceId,
     this.lockScope = false,
   });
 
   final HospitalRoom? room;
   final List<Hospital> hospitals;
   final List<HospitalService> services;
+  final String? initialHospitalId;
+  final String? initialServiceId;
   final bool lockScope;
 
   @override
@@ -108,7 +112,7 @@ class RoomDialog extends StatefulWidget {
 class _RoomDialogState extends State<RoomDialog> {
   late String _hospitalId = _existingOrFirst(
     widget.hospitals.map((item) => item.id),
-    widget.room?.hospitalId,
+    _preferredHospitalId(),
   );
   late String _serviceId = _existingOrFirstOrEmpty(
     _servicesFor(
@@ -116,7 +120,7 @@ class _RoomDialogState extends State<RoomDialog> {
       widget.hospitals,
       _hospitalId,
     ).map((item) => item.id),
-    widget.room?.serviceId,
+    widget.room?.serviceId ?? widget.initialServiceId,
   );
   late RoomType _type = widget.room?.type ?? RoomType.single;
   late RoomStatus _status = widget.room?.status ?? RoomStatus.available;
@@ -132,6 +136,24 @@ class _RoomDialogState extends State<RoomDialog> {
   );
   late final _firstBedNumber = TextEditingController(text: '1');
   final _formKey = GlobalKey<FormState>();
+
+  String? _preferredHospitalId() {
+    final room = widget.room;
+    if (room != null) return room.hospitalId;
+    final serviceId = widget.initialServiceId;
+    if (serviceId != null) {
+      for (final hospital in widget.hospitals) {
+        if (hospital.id == widget.initialHospitalId &&
+            hospital.serviceIds.contains(serviceId)) {
+          return hospital.id;
+        }
+      }
+      for (final hospital in widget.hospitals) {
+        if (hospital.serviceIds.contains(serviceId)) return hospital.id;
+      }
+    }
+    return widget.initialHospitalId;
+  }
 
   @override
   void dispose() {

@@ -5,6 +5,10 @@ const { HttpError } = require('../errors');
 const { hashPassword } = require('../services/auth');
 const { userResponse } = require('./authController');
 const {
+  DEFAULT_DOCTOR_SERVICE_NAME,
+  ensureDoctorService,
+} = require('../services/defaultDoctorService');
+const {
   requireBoolean,
   requireEmail,
   requireId,
@@ -85,6 +89,16 @@ async function validateServiceIds(serviceIds) {
   const count = await Service.countDocuments({ _id: { $in: serviceIds } });
   if (count !== serviceIds.length) throw new HttpError(400, 'One or more serviceIds do not exist.');
   return serviceIds;
+}
+
+async function validateSecretaryServices(serviceIds) {
+  const doctorService = await Service.findOne({
+    name: DEFAULT_DOCTOR_SERVICE_NAME,
+  }).select('_id');
+  if (doctorService &&
+      serviceIds.some((id) => id.toString() === doctorService._id.toString())) {
+    throw new HttpError(400, 'The automatic doctor service cannot be assigned to secretaries.');
+  }
 }
 
 async function validateHospital(hospitalId) {
@@ -237,20 +251,32 @@ async function create(req, res) {
   fields.serviceId = await validateService(fields.serviceId);
   fields.pharmacyId = await validatePharmacy(fields.pharmacyId);
   fields.serviceIds = await validateServiceIds(fields.serviceIds);
+  const hasDoctor = fields.roles.includes('doctor');
+  const hasSecretary = fields.roles.includes('secretary');
+  if (hasDoctor) {
+    if (!fields.specialty.trim()) {
+      throw new HttpError(400, 'A doctor must have a specialty.');
+    }
+    const doctorService = await ensureDoctorService();
+    fields.serviceId = doctorService._id;
+  }
+  if (!hasDoctor) fields.specialty = '';
   await validateResourceAssignments(fields, fields.roles);
-  const hasServiceRole = fields.roles.includes('secretary') ||
-    fields.roles.includes('doctor');
-  if (hasServiceRole) {
-    fields.serviceIds = body.serviceIds === undefined && fields.serviceId
-      ? [fields.serviceId]
-      : fields.serviceIds;
-    if (fields.roles.includes('secretary') && !fields.serviceIds.length) {
+  if (hasSecretary) {
+    if (!fields.serviceIds.length) {
       throw new HttpError(400, 'A secretary must be assigned to at least one service.');
     }
-    if (['secretary', 'doctor'].includes(fields.role)) {
-      fields.serviceId = fields.serviceIds[0] || null;
+    await validateSecretaryServices(fields.serviceIds);
+    if (!hasDoctor && !fields.roles.includes('service_head')) {
+      fields.serviceId = fields.serviceIds[0];
     }
-  } else if (fields.serviceIds.length) {
+  } else if (hasDoctor) {
+    fields.serviceIds = [fields.serviceId];
+  } else {
+    fields.serviceIds = [];
+    if (!fields.roles.includes('service_head')) fields.serviceId = null;
+  }
+  if (!hasDoctor && !hasSecretary && fields.serviceIds.length) {
     throw new HttpError(400, 'serviceIds can only be assigned to doctors or secretaries.');
   }
   fields.passwordHash = await hashPassword(fields.password);
@@ -274,10 +300,54 @@ async function update(req, res) {
 
   const currentUser = await User.findById(id);
   if (!currentUser) throw new HttpError(404, 'User not found.');
+  const previousRoles = currentUser.roles?.length
+    ? currentUser.roles
+    : [currentUser.role];
   const assignedRoles = fields.roles ||
-      (currentUser.roles?.length
-          ? currentUser.roles
-          : [fields.role || currentUser.role]);
+    previousRoles;
+  const hasDoctor = assignedRoles.includes('doctor');
+  const hasSecretary = assignedRoles.includes('secretary');
+  const secretaryServices = fields.serviceIds !== undefined
+    ? fields.serviceIds
+    : fields.roles !== undefined && !previousRoles.includes('secretary')
+    ? []
+    : currentUser.serviceIds?.length
+    ? currentUser.serviceIds
+    : previousRoles.includes('secretary') && currentUser.serviceId
+    ? [currentUser.serviceId]
+    : [];
+  if (hasSecretary && !secretaryServices.length) {
+    throw new HttpError(400, 'A secretary must be assigned to at least one service.');
+  }
+  if (hasSecretary) await validateSecretaryServices(secretaryServices);
+  if (hasDoctor) {
+    const specialty = fields.specialty ?? currentUser.specialty ?? '';
+    if (!specialty.trim()) {
+      throw new HttpError(400, 'A doctor must have a specialty.');
+    }
+    fields.specialty = specialty;
+    const doctorService = await ensureDoctorService();
+    fields.serviceId = doctorService._id;
+    fields.serviceIds = hasSecretary
+      ? secretaryServices
+      : [doctorService._id];
+  } else {
+    if (fields.roles !== undefined || fields.role !== undefined) {
+      fields.specialty = '';
+    }
+    if (hasSecretary) {
+      fields.serviceIds = secretaryServices;
+      if (!assignedRoles.includes('service_head')) {
+        fields.serviceId = secretaryServices[0];
+      }
+    } else if (assignedRoles.includes('service_head')) {
+      fields.serviceIds = [];
+    } else if (fields.roles !== undefined || fields.role !== undefined ||
+        fields.serviceId !== undefined || fields.serviceIds !== undefined) {
+      fields.serviceIds = [];
+      fields.serviceId = null;
+    }
+  }
   const assignmentFields = {
     hospitalId: fields.hospitalId === undefined
       ? currentUser.hospitalId || null
@@ -307,52 +377,6 @@ async function update(req, res) {
   if (fields.hospitalId !== undefined || assignedRoles.includes('service_head') ||
       assignedRoles.includes('operating_room_manager')) {
     fields.hospitalId = assignmentFields.hospitalId;
-  }
-  const hasServiceRole = assignedRoles.includes('secretary') ||
-    assignedRoles.includes('doctor') ||
-    assignedRoles.includes('service_head');
-  if (hasServiceRole) {
-    if (fields.serviceIds === undefined &&
-        fields.serviceId !== undefined &&
-        ['secretary', 'doctor'].includes(fields.role)) {
-      fields.serviceIds = fields.serviceId ? [fields.serviceId] : [];
-    } else if (fields.serviceIds === undefined &&
-        !currentUser.roles?.some((role) => ['secretary', 'doctor'].includes(role)) &&
-        !['secretary', 'doctor'].includes(currentUser.role)) {
-      fields.serviceIds = currentUser.serviceIds?.length
-        ? currentUser.serviceIds
-        : currentUser.serviceId
-          ? [currentUser.serviceId]
-          : [];
-    }
-    const assignedServiceIds = fields.serviceIds !== undefined
-      ? fields.serviceIds
-      : currentUser.serviceIds?.length
-        ? currentUser.serviceIds
-        : currentUser.serviceId
-          ? [currentUser.serviceId]
-          : [];
-    if ((assignedRoles.includes('secretary') &&
-         (fields.roles !== undefined ||
-          fields.role === 'secretary' ||
-         fields.serviceIds !== undefined ||
-          fields.serviceId !== undefined)) &&
-        !assignedServiceIds.length) {
-      throw new HttpError(400, 'A secretary must be assigned to at least one service.');
-    }
-    if (['secretary', 'doctor'].includes(fields.role) &&
-        fields.serviceIds !== undefined) {
-      fields.serviceId = fields.serviceIds[0] || null;
-    }
-  } else if (fields.serviceIds?.length) {
-    throw new HttpError(400, 'serviceIds can only be assigned to doctors or secretaries.');
-  } else if (fields.roles !== undefined ||
-      fields.role !== undefined &&
-        (currentUser.role === 'secretary' ||
-         currentUser.role === 'doctor' ||
-         currentUser.roles?.some((role) => ['secretary', 'doctor'].includes(role)))) {
-    fields.serviceIds = [];
-    fields.serviceId = null;
   }
   const user = await User.findByIdAndUpdate(id, { $set: fields }, {
     new: true,

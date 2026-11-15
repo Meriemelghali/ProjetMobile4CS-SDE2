@@ -4,7 +4,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/widgets.dart';
-import '../../services/domain/hospital_service.dart';
 import '../data/appointment_service.dart';
 import '../domain/appointment.dart';
 
@@ -594,8 +593,8 @@ class _AppointmentProposalDialogState extends State<AppointmentProposalDialog> {
               child: Center(
                 child: Text(
                   _text(
-                    'Aucun créneau disponible à cette date.',
-                    'لا توجد مواعيد متاحة في هذا اليوم.',
+                    'Aucun créneau libre pour ce médecin à cette date. Les créneaux passés ou déjà réservés ne sont pas affichés.',
+                    'لا توجد مواعيد متاحة لهذا الطبيب في هذا اليوم. لا تظهر المواعيد الماضية أو المحجوزة.',
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -984,12 +983,10 @@ class SecretaryHomeTab extends StatelessWidget {
 class AppointmentFormDialog extends StatefulWidget {
   const AppointmentFormDialog({
     super.key,
-    required this.services,
     this.appointment,
     this.isArabic = false,
   });
 
-  final List<HospitalService> services;
   final Appointment? appointment;
   final bool isArabic;
 
@@ -1005,11 +1002,11 @@ class _AppointmentFormDialogState extends State<AppointmentFormDialog> {
     text: widget.appointment?.reason ?? '',
   );
   final _appointmentService = AppointmentService();
-  late String? _serviceId = _initialServiceId();
+  String? _specialty;
   late String? _doctorId;
   late DateTime _date = _initialDate();
   DateTime? _slot;
-  List<AppointmentDoctor> _doctors = const [];
+  List<AppointmentDoctor> _availableDoctors = const [];
   List<DateTime> _slots = const [];
   int _step = 0;
   bool _isLoadingDoctors = false;
@@ -1022,7 +1019,7 @@ class _AppointmentFormDialogState extends State<AppointmentFormDialog> {
   void initState() {
     super.initState();
     _doctorId = widget.appointment?.doctorId;
-    if (_serviceId != null) _loadDoctors();
+    _loadDoctors();
   }
 
   @override
@@ -1031,14 +1028,19 @@ class _AppointmentFormDialogState extends State<AppointmentFormDialog> {
     super.dispose();
   }
 
-  String? _initialServiceId() {
-    final serviceId = widget.appointment?.serviceId;
-    if (serviceId != null &&
-        widget.services.any((service) => service.id == serviceId)) {
-      return serviceId;
-    }
-    return widget.services.isEmpty ? null : widget.services.first.id;
-  }
+  List<String> get _specialties =>
+      _availableDoctors
+          .map((doctor) => doctor.specialty.trim())
+          .where((specialty) => specialty.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort(
+          (left, right) => left.toLowerCase().compareTo(right.toLowerCase()),
+        );
+
+  List<AppointmentDoctor> get _doctors => _availableDoctors
+      .where((doctor) => doctor.specialty.trim() == _specialty)
+      .toList();
 
   DateTime _initialDate() {
     final appointmentDate = widget.appointment?.startAt;
@@ -1054,27 +1056,30 @@ class _AppointmentFormDialogState extends State<AppointmentFormDialog> {
   }
 
   Future<void> _loadDoctors() async {
-    final serviceId = _serviceId;
-    if (serviceId == null) return;
     final request = ++_doctorRequest;
     setState(() {
       _isLoadingDoctors = true;
       _error = null;
-      _doctors = const [];
+      _availableDoctors = const [];
       _slots = const [];
       _slot = null;
     });
     try {
-      final doctors = await _appointmentService.listDoctors(
-        serviceId: serviceId,
-      );
-      if (!mounted || request != _doctorRequest || serviceId != _serviceId) {
-        return;
-      }
+      final doctors = await _appointmentService.listDoctors();
+      if (!mounted || request != _doctorRequest) return;
+      final selectedDoctor = doctors
+          .where((doctor) => doctor.id == _doctorId)
+          .firstOrNull;
       setState(() {
-        _doctors = doctors;
-        if (!doctors.any((doctor) => doctor.id == _doctorId)) {
-          _doctorId = doctors.isEmpty ? null : doctors.first.id;
+        _availableDoctors = doctors;
+        _specialty =
+            selectedDoctor?.specialty ??
+            (_specialties.contains(_specialty)
+                ? _specialty
+                : _specialties.firstOrNull);
+        final specialtyDoctors = _doctors;
+        if (!specialtyDoctors.any((doctor) => doctor.id == _doctorId)) {
+          _doctorId = specialtyDoctors.firstOrNull?.id;
         }
       });
     } on ApiException catch (error) {
@@ -1159,9 +1164,8 @@ class _AppointmentFormDialogState extends State<AppointmentFormDialog> {
 
   Future<void> _next() async {
     if (_step == 0) {
-      if (_serviceId == null) return;
+      if (_specialty == null) return;
       setState(() => _step = 1);
-      await _loadDoctors();
       return;
     }
     if (_step == 1) {
@@ -1193,7 +1197,7 @@ class _AppointmentFormDialogState extends State<AppointmentFormDialog> {
   Widget build(BuildContext context) {
     final editing = widget.appointment != null;
     final steps = [
-      _text('Service', 'القسم'),
+      _text('Spécialité', 'التخصص'),
       _text('Médecin', 'الطبيب'),
       _text('Créneau', 'الموعد'),
       _text('Confirmation', 'التأكيد'),
@@ -1246,52 +1250,59 @@ class _AppointmentFormDialogState extends State<AppointmentFormDialog> {
   }
 
   bool get _canAdvance => switch (_step) {
-    0 => _serviceId != null,
+    0 => !_isLoadingDoctors && _specialty != null,
     1 => !_isLoadingDoctors && _doctorId != null,
     2 => !_isLoadingSlots && _slot != null,
     _ => true,
   };
 
   Widget _stepContent() => switch (_step) {
-    0 => _serviceStep(),
+    0 => _specialtyStep(),
     1 => _doctorStep(),
     2 => _slotStep(),
     _ => _confirmationStep(),
   };
 
-  Widget _serviceStep() => widget.services.isEmpty
-      ? Center(
-          child: Text(
-            _text(
-              'Aucun service ouvert aux demandes.',
-              'لا توجد أقسام متاحة للحجز.',
-            ),
-            textAlign: TextAlign.center,
+  Widget _specialtyStep() {
+    if (_isLoadingDoctors) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_specialties.isEmpty) {
+      return Center(
+        child: Text(
+          _text(
+            'Aucun médecin réservable. Vérifiez qu’un médecin actif est '
+                'affecté à cette spécialité, que le service est actif et que '
+                '« Rendez-vous » est activé.',
+            'لا يوجد طبيب متاح للحجز. تحقق من تعيين طبيب نشط لهذا التخصص، '
+                'ومن تفعيل القسم وخيار «المواعيد».',
           ),
-        )
-      : ListView(
-          children: [
-            for (final service in widget.services)
-              Card(
-                child: ListTile(
-                  title: Text(service.name),
-                  subtitle: Text(service.location),
-                  trailing: _serviceId == service.id
-                      ? const Icon(Icons.check_circle, color: AppColors.blue)
-                      : const Icon(Icons.circle_outlined),
-                  onTap: () {
-                    if (_serviceId == service.id) return;
-                    setState(() {
-                      _serviceId = service.id;
-                      _doctorId = null;
-                      _doctors = const [];
-                    });
-                    _loadDoctors();
-                  },
-                ),
-              ),
-          ],
-        );
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    return ListView(
+      children: [
+        for (final specialty in _specialties)
+          Card(
+            child: ListTile(
+              title: Text(specialty),
+              trailing: _specialty == specialty
+                  ? const Icon(Icons.check_circle, color: AppColors.blue)
+                  : const Icon(Icons.circle_outlined),
+              onTap: () {
+                if (_specialty == specialty) return;
+                setState(() {
+                  _specialty = specialty;
+                  _doctorId = _doctors.firstOrNull?.id;
+                  _slot = null;
+                });
+              },
+            ),
+          ),
+      ],
+    );
+  }
 
   Widget _doctorStep() {
     if (_isLoadingDoctors) {
@@ -1301,8 +1312,8 @@ class _AppointmentFormDialogState extends State<AppointmentFormDialog> {
       return Center(
         child: Text(
           _text(
-            'Aucun médecin disponible pour ce service.',
-            'لا يوجد طبيب متاح في هذا القسم.',
+            'Aucun médecin disponible pour cette spécialité.',
+            'لا يوجد طبيب متاح لهذا التخصص.',
           ),
           textAlign: TextAlign.center,
         ),
@@ -1316,11 +1327,7 @@ class _AppointmentFormDialogState extends State<AppointmentFormDialog> {
               selected: _doctorId == doctor.id,
               leading: _doctorAvatar(doctor),
               title: Text(doctor.name),
-              subtitle: Text(
-                doctor.specialty.isEmpty
-                    ? doctor.serviceName
-                    : doctor.specialty,
-              ),
+              subtitle: Text(doctor.specialty),
               trailing: _doctorId == doctor.id
                   ? const Icon(Icons.check_circle, color: AppColors.blue)
                   : null,
@@ -1406,14 +1413,11 @@ class _AppointmentFormDialogState extends State<AppointmentFormDialog> {
 
   Widget _confirmationStep() {
     final doctor = _doctors.where((item) => item.id == _doctorId).firstOrNull;
-    final service = widget.services
-        .where((item) => item.id == _serviceId)
-        .firstOrNull;
     return Form(
       key: _formKey,
       child: ListView(
         children: [
-          Text('${_text('Service', 'القسم')} : ${service?.name ?? ''}'),
+          Text('${_text('Spécialité', 'التخصص')} : ${_specialty ?? ''}'),
           Text('${_text('Médecin', 'الطبيب')} : ${doctor?.name ?? ''}'),
           Text(
             '${_text('Date et heure', 'التاريخ والوقت')} : ${_slot == null ? '' : _dateTimeLabel(_slot!)}',

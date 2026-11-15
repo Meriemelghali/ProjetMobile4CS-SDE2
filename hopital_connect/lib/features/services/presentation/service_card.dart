@@ -18,31 +18,27 @@ import '../domain/hospital_service.dart';     // Modèle HospitalService + enum 
 /// Permet d'identifier visuellement la catégorie médicale sans lire le texte.
 /// Exemple : urgences = rouge, pédiatrie = vert menthe.
 const Map<ServiceType, Color> _typeColors = {
-  ServiceType.medecine:    Color(0xFF176B87), // Bleu — médecine générale
-  ServiceType.chirurgie:   Color(0xFF8B45A0), // Violet — chirurgie
-  ServiceType.urgences:    Color(0xFFD64045), // Rouge — urgences (couleur d'alerte)
-  ServiceType.pediatrie:   Color(0xFF36A98B), // Vert menthe — pédiatrie (doux)
-  ServiceType.gynecologie: Color(0xFFE0689A), // Rose — gynécologie
-  ServiceType.radiologie:  Color(0xFF5B6BBF), // Bleu indigo — radiologie
-  ServiceType.laboratoire: Color(0xFFE8891A), // Orange — laboratoire
-  ServiceType.reanimation: Color(0xFFC0392B), // Rouge foncé — réanimation (critique)
-  ServiceType.psychiatrie: Color(0xFF2E7D32), // Vert foncé — psychiatrie
-  ServiceType.autre:       Color(0xFF607D8B), // Gris bleuté — catégorie non définie
+  ServiceType.medical: Color(0xFF176B87),
+  ServiceType.surgical: Color(0xFF8B45A0),
+  ServiceType.emergency: Color(0xFFD64045),
+  ServiceType.intensiveCare: Color(0xFFC0392B),
+  ServiceType.maternity: Color(0xFFE0689A),
+  ServiceType.medicoTechnical: Color(0xFF5B6BBF),
+  ServiceType.administrative: Color(0xFFE8891A),
+  ServiceType.other: Color(0xFF607D8B),
 };
 
 /// Association type de service → icône Material.
 /// final (pas const) car Icons.xxx ne sont pas des constantes de compilation.
 final Map<ServiceType, IconData> _typeIcons = {
-  ServiceType.medecine:    Icons.favorite_outline,       // Cœur → médecine
-  ServiceType.chirurgie:   Icons.cut_outlined,           // Ciseau → chirurgie
-  ServiceType.urgences:    Icons.emergency_outlined,     // Croix urgence → urgences
-  ServiceType.pediatrie:   Icons.child_care_outlined,    // Bébé → pédiatrie
-  ServiceType.gynecologie: Icons.pregnant_woman_outlined,// Femme enceinte → gynécologie
-  ServiceType.radiologie:  Icons.biotech_outlined,       // Labo → radiologie
-  ServiceType.laboratoire: Icons.science_outlined,       // Flacon → laboratoire
-  ServiceType.reanimation: Icons.monitor_heart_outlined, // Moniteur → réanimation
-  ServiceType.psychiatrie: Icons.psychology_outlined,    // Cerveau → psychiatrie
-  ServiceType.autre:       Icons.medical_services_outlined, // Croix médicale → autre
+  ServiceType.medical: Icons.favorite_outline,
+  ServiceType.surgical: Icons.cut_outlined,
+  ServiceType.emergency: Icons.emergency_outlined,
+  ServiceType.intensiveCare: Icons.monitor_heart_outlined,
+  ServiceType.maternity: Icons.pregnant_woman_outlined,
+  ServiceType.medicoTechnical: Icons.biotech_outlined,
+  ServiceType.administrative: Icons.business_outlined,
+  ServiceType.other: Icons.medical_services_outlined,
 };
 
 // =============================================================================
@@ -59,14 +55,18 @@ class ServiceCard extends StatelessWidget {
     super.key,                  // Clé Flutter pour identifier ce widget dans l'arbre
     required this.service,      // Service hospitalier à afficher (obligatoire)
     this.canEdit = false,       // false = mode lecture seule, true = boutons admin visibles
+    this.canEditDetails = false,
     this.onEdit,                // Fonction appelée quand l'admin appuie sur "Modifier"
+    this.onDelete,
     this.onToggleActive,        // Fonction appelée quand l'admin appuie sur le toggle
     this.onTap,                 // Fonction appelée quand l'utilisateur tape la carte entière
   });
 
   final HospitalService service;    // Données du service à afficher
   final bool canEdit;               // Contrôle la visibilité des boutons admin
+  final bool canEditDetails;
   final VoidCallback? onEdit;       // Callback "Modifier" (null = bouton ignoré)
+  final VoidCallback? onDelete;
   final VoidCallback? onToggleActive; // Callback toggle actif/inactif
   final VoidCallback? onTap;        // Callback tap général sur la carte
 
@@ -234,7 +234,7 @@ class ServiceCard extends StatelessWidget {
 
                         // ---- BOUTONS ADMIN (seulement si canEdit = true) ----
                         // if (canEdit) : n'affiche ces boutons que pour l'administrateur
-                        if (canEdit)
+                        if (canEdit || canEditDetails)
                           Row(
                             mainAxisSize: MainAxisSize.min, // Largeur minimale (ne prend pas plus que nécessaire)
                             children: [
@@ -248,24 +248,32 @@ class ServiceCard extends StatelessWidget {
                                 onPressed: onEdit,                      // Appelle le callback onEdit
                               ),
 
-                              // BOUTON TOGGLE ACTIF/INACTIF
-                              IconButton(
-                                // Tooltip adaptatif selon l'état actuel du service
-                                tooltip: isActive ? 'Désactiver' : 'Réactiver',
-
-                                icon: Icon(
-                                  // Icône ON (actif) ou OFF (inactif) selon l'état
-                                  isActive
-                                      ? Icons.toggle_on_rounded  // Service actif → icône "allumé"
-                                      : Icons.toggle_off_rounded, // Service inactif → icône "éteint"
-                                  size: 26, // Plus grande que le bouton modifier pour être visible
+                              if (canEdit) ...[
+                                IconButton(
+                                  tooltip: 'Supprimer',
+                                  icon: const Icon(Icons.delete_outline, size: 18),
+                                  color: const Color(0xFFB3261E),
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: onDelete,
                                 ),
 
-                                // Couleur vert menthe si actif, gris si inactif
-                                color: isActive ? AppColors.mint : const Color(0xFF9AA9B0),
-                                visualDensity: VisualDensity.compact, // Zone de tap compacte
-                                onPressed: onToggleActive,            // Appelle le callback toggle
-                              ),
+                                IconButton(
+                                  tooltip: isActive ? 'Désactiver' : 'Réactiver',
+
+                                  icon: Icon(
+                                    isActive
+                                        ? Icons.toggle_on_rounded
+                                        : Icons.toggle_off_rounded,
+                                    size: 26,
+                                  ),
+
+                                  color: isActive
+                                      ? AppColors.mint
+                                      : const Color(0xFF9AA9B0),
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: onToggleActive,
+                                ),
+                              ],
                             ],
                           ),
                       ],

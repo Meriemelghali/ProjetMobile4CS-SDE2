@@ -3,14 +3,75 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hopital_connect/app.dart';
 import 'package:hopital_connect/features/appointments/domain/appointment.dart';
 import 'package:hopital_connect/features/appointments/presentation/patient_home_tab.dart';
+import 'package:hopital_connect/features/dashboard/presentation/dashboard_page.dart';
 import 'package:hopital_connect/features/dashboard/presentation/doctor_space_tabs.dart';
 import 'package:hopital_connect/features/hospital/domain/hospital_resources.dart';
 import 'package:hopital_connect/features/planning/domain/shift.dart';
+import 'package:hopital_connect/features/services/domain/hospital_service.dart';
 import 'package:hopital_connect/features/transmissions/domain/handover.dart';
 import 'package:hopital_connect/features/users/domain/staff_role.dart';
 import 'package:hopital_connect/features/users/domain/staff_user.dart';
 
 void main() {
+  testWidgets('service head home lists every managed service', (tester) async {
+    const user = StaffUser(
+      id: 'head-id',
+      displayName: 'Responsable',
+      email: 'head@example.test',
+      role: StaffRole.serviceHead,
+      serviceId: 'legacy-assignment',
+    );
+    const services = [
+      HospitalService(
+        id: 'cardiology',
+        name: 'Cardiologie',
+        location: '',
+        description: '',
+        headUserId: 'head-id',
+      ),
+      HospitalService(
+        id: 'pediatrics',
+        name: 'Pédiatrie',
+        location: '',
+        description: '',
+        headUserId: 'head-id',
+      ),
+      HospitalService(
+        id: 'legacy-assignment',
+        name: 'Médecine générale',
+        location: '',
+        description: '',
+      ),
+      HospitalService(
+        id: 'unrelated',
+        name: 'Urgences',
+        location: '',
+        description: '',
+        headUserId: 'another-head',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HomeTab(
+            user: user,
+            services: services,
+            nextShift: null,
+            latestHandover: null,
+            onHandoverTap: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.text('Cardiologie, Pédiatrie, Médecine générale'),
+      findsOneWidget,
+    );
+    expect(find.text('Aucun service attribué'), findsNothing);
+  });
+
   test('appointment updates and secretary service assignments deserialize', () {
     expect(
       AppointmentStatus.fromApiValue('proposed'),

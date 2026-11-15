@@ -255,6 +255,51 @@ void main() {
     expect(result!.firstBedNumber, 1);
   });
 
+  testWidgets('new room dialog selects the hospital of the scoped service', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: RoomDialog(
+            hospitals: const [
+              Hospital(
+                id: 'hospital-1',
+                name: 'Hôpital 1',
+                serviceIds: ['service-1'],
+              ),
+              Hospital(
+                id: 'hospital-2',
+                name: 'Hôpital 2',
+                serviceIds: ['service-2'],
+              ),
+            ],
+            services: const [
+              HospitalService(
+                id: 'service-1',
+                name: 'Cardiologie',
+                location: '',
+                description: '',
+              ),
+              HospitalService(
+                id: 'service-2',
+                name: 'Pédiatrie',
+                location: '',
+                description: '',
+              ),
+            ],
+            initialHospitalId: 'hospital-1',
+            initialServiceId: 'service-2',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Hôpital 2'), findsOneWidget);
+    expect(find.text('Pédiatrie'), findsOneWidget);
+  });
+
   testWidgets('operating room dialog accepts a suggested next number', (
     tester,
   ) async {

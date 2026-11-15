@@ -8,9 +8,19 @@ const {
 } = require('../src/controllers/authController');
 const { HttpError } = require('../src/errors');
 const { authorize } = require('../src/middleware/authorize');
-const { assertRoomScope } = require('../src/middleware/resourceAccess');
-const { serviceResponse } = require('../src/controllers/servicesController');
-const { shiftResponse } = require('../src/controllers/shiftsController');
+const {
+  assertRoomScope,
+  attachServiceHeadScope,
+} = require('../src/middleware/resourceAccess');
+const {
+  hasServiceReferences,
+  list: listServices,
+  serviceResponse,
+} = require('../src/controllers/servicesController');
+const {
+  doctorServiceMatchesSpecialty,
+  shiftResponse,
+} = require('../src/controllers/shiftsController');
 const { handoverResponse } = require('../src/controllers/handoversController');
 const Appointment = require('../src/models/Appointment');
 const {
@@ -18,13 +28,17 @@ const {
 } = require('../src/controllers/notificationsController');
 const {
   appointmentResponse,
+  doctorMatchesSecretaryServices,
   generateAvailableSlots,
+  isAppointmentBookableDoctor,
+  serviceIdsFor,
   STATUS_TRANSITIONS,
 } = require('../src/controllers/appointmentsController');
 const {
   bedResponse,
   occupancyResponse,
   roomResponse,
+  validateRoomFields,
 } = require('../src/controllers/hospitalResourcesController');
 const {
   equipmentResponse,
@@ -38,6 +52,11 @@ const {
   DEFAULT_HOSPITAL_NAME,
   ensureDefaultHospital,
 } = require('../src/services/defaultHospital');
+const {
+  DEFAULT_DOCTOR_SERVICE_NAME,
+  assignExistingDoctorsToDefaultService,
+  ensureDoctorService,
+} = require('../src/services/defaultDoctorService');
 const {
   requireDateOnly,
   requireDate,
@@ -54,8 +73,9 @@ const {
   verifyToken,
 } = require('../src/services/auth');
 const Intervention = require('../src/models/Intervention');
-const User = require('../src/models/User');
+const Hospital = require('../src/models/Hospital');
 const Room = require('../src/models/Room');
+const User = require('../src/models/User');
 const Bed = require('../src/models/Bed');
 const OperatingRoom = require('../src/models/OperatingRoom');
 const Equipment = require('../src/models/Equipment');
@@ -129,6 +149,49 @@ test('room number uniqueness is scoped to a service', () => {
     floor: 1,
     number: 1,
   });
+});
+
+test('room numbers can repeat on different floors but not the same service floor', async () => {
+  const originalHospitalExists = Hospital.exists;
+  const originalRoomExists = Room.exists;
+  const duplicateQueries = [];
+  Hospital.exists = async () => true;
+  Room.exists = async (query) => {
+    duplicateQueries.push(query);
+    return null;
+  };
+
+  try {
+    await validateRoomFields({
+      hospitalId: 'hospital-id',
+      serviceId: 'service-id',
+      floor: '3',
+      number: 1,
+    });
+    Room.exists = async (query) => {
+      duplicateQueries.push(query);
+      return true;
+    };
+    await assert.rejects(
+      validateRoomFields({
+        hospitalId: 'hospital-id',
+        serviceId: 'service-id',
+        floor: '1',
+        number: 1,
+      }),
+      (error) => error instanceof HttpError &&
+        error.status === 409 &&
+        error.message.includes('service and floor'),
+    );
+  } finally {
+    Hospital.exists = originalHospitalExists;
+    Room.exists = originalRoomExists;
+  }
+
+  assert.deepEqual(duplicateQueries, [
+    { serviceId: 'service-id', floor: '3', number: 1 },
+    { serviceId: 'service-id', floor: '1', number: 1 },
+  ]);
 });
 
 test('service managers cannot access rooms outside their assigned hospital or service', () => {
@@ -258,6 +321,29 @@ test('resource serializers expose the documented Flutter fields', () => {
   }, 'reader-id').isRead, true);
 });
 
+test('a shift can only use the selected doctor’s specialty service', () => {
+  const doctor = {
+    role: 'doctor',
+    roles: ['doctor'],
+    specialty: 'Cardiologie',
+  };
+  assert.equal(
+    doctorServiceMatchesSpecialty(doctor, { name: 'Cardiologie' }),
+    true,
+  );
+  assert.equal(
+    doctorServiceMatchesSpecialty(doctor, { name: 'Neurologie' }),
+    false,
+  );
+  assert.equal(
+    doctorServiceMatchesSpecialty(
+      { role: 'administrator', roles: ['administrator'], specialty: 'Cardiologie' },
+      { name: 'Cardiologie' },
+    ),
+    false,
+  );
+});
+
 test('default hospital bootstrap is idempotent and links existing services', async () => {
   let existingHospital = null;
   let createdHospital;
@@ -290,6 +376,179 @@ test('default hospital bootstrap is idempotent and links existing services', asy
   );
 });
 
+test('default doctor service is enabled and linked to existing hospitals', async () => {
+  const service = { _id: 'doctor-service' };
+  let serviceFilter;
+  let serviceUpdate;
+  let hospitalUpdate;
+  const serviceModel = {
+    findOneAndUpdate: async (filter, update, options) => {
+      serviceFilter = filter;
+      serviceUpdate = { update, options };
+      return service;
+    },
+  };
+  const hospitalModel = {
+    updateMany: async (filter, update) => {
+      hospitalUpdate = { filter, update };
+    },
+  };
+
+  assert.equal(
+    await ensureDoctorService({ serviceModel, hospitalModel }),
+    service,
+  );
+  assert.deepEqual(serviceFilter, { name: DEFAULT_DOCTOR_SERVICE_NAME });
+  assert.deepEqual(serviceUpdate.update.$set, {
+    active: true,
+    a_rdv: true,
+    serviceType: 'medical',
+  });
+  assert.equal(serviceUpdate.options.upsert, true);
+  assert.deepEqual(hospitalUpdate, {
+    filter: {},
+    update: { $addToSet: { serviceIds: service._id } },
+  });
+});
+
+test('service deletion is blocked when operational records reference it', async () => {
+  const models = {
+    userModel: { exists: async () => null },
+    shiftModel: { exists: async () => null },
+    roomModel: { exists: async () => null },
+    operatingRoomModel: { exists: async () => null },
+    equipmentModel: { exists: async () => ({ _id: 'equipment-id' }) },
+    handoverModel: { exists: async () => null },
+    medicationRequestModel: { exists: async () => null },
+  };
+
+  assert.equal(await hasServiceReferences('service-id', models), true);
+  models.equipmentModel.exists = async () => null;
+  assert.equal(await hasServiceReferences('service-id', models), false);
+});
+
+test('service heads receive all managed services and their legacy assignment', async () => {
+  const originalFind = Service.find;
+  const managedServiceIds = ['managed-one', 'managed-two'];
+  const queries = [];
+  Service.find = (query) => {
+    queries.push(query);
+    return {
+      sort() {
+        return this;
+      },
+      limit: async () => [],
+    };
+  };
+
+  const runList = (user) =>
+    listServices({ user }, { json: (body) => body });
+
+  try {
+    await runList({
+      _id: 'head-id',
+      role: 'service_head',
+      roles: ['service_head'],
+      serviceId: 'legacy-assignment',
+      $locals: {
+        serviceHeadServiceIds: [...managedServiceIds, 'legacy-assignment'],
+      },
+    });
+    await runList({
+      _id: 'doctor-head-id',
+      role: 'service_head',
+      roles: ['doctor', 'service_head'],
+      serviceId: 'doctor-default-service',
+      $locals: { serviceHeadServiceIds: managedServiceIds },
+    });
+  } finally {
+    Service.find = originalFind;
+  }
+
+  assert.deepEqual(queries[0]._id, {
+    $in: ['managed-one', 'managed-two', 'legacy-assignment'],
+  });
+  assert.deepEqual(queries[1]._id, {
+    $in: ['managed-one', 'managed-two'],
+  });
+});
+
+test('service head resource scope includes hospitals for every managed service', async () => {
+  const serviceQueries = [];
+  const hospitalQueries = [];
+  const user = {
+    _id: 'head-id',
+    role: 'service_head',
+    roles: ['service_head'],
+    serviceId: 'legacy-service',
+    hospitalId: 'legacy-hospital',
+  };
+
+  await attachServiceHeadScope(user, {
+    serviceModel: {
+      find(query) {
+        serviceQueries.push(query);
+        return { distinct: async () => ['managed-service'] };
+      },
+    },
+    hospitalModel: {
+      find(query) {
+        hospitalQueries.push(query);
+        return { distinct: async () => ['managed-hospital', 'legacy-hospital'] };
+      },
+    },
+  });
+
+  assert.deepEqual(serviceQueries, [{ headUserId: 'head-id' }]);
+  assert.deepEqual(hospitalQueries, [{
+    serviceIds: { $in: ['managed-service', 'legacy-service'] },
+  }]);
+  assert.deepEqual(user.$locals.serviceHeadServiceIds, [
+    'managed-service',
+    'legacy-service',
+  ]);
+  assert.deepEqual(user.$locals.serviceHeadHospitalIds, [
+    'managed-hospital',
+    'legacy-hospital',
+  ]);
+});
+
+test('existing doctors are moved to the default service without losing secretary assignments', async () => {
+  const updates = [];
+  await assignExistingDoctorsToDefaultService({
+    serviceId: 'doctor-service',
+    userModel: {
+      updateMany: async (filter, update) => updates.push({ filter, update }),
+    },
+  });
+
+  assert.deepEqual(updates, [
+    {
+      filter: {
+        $and: [
+          { $or: [{ role: 'doctor' }, { roles: 'doctor' }] },
+          { roles: 'secretary' },
+        ],
+      },
+      update: { $set: { serviceId: 'doctor-service' } },
+    },
+    {
+      filter: {
+        $and: [
+          { $or: [{ role: 'doctor' }, { roles: 'doctor' }] },
+          { roles: { $ne: 'secretary' } },
+        ],
+      },
+      update: {
+        $set: {
+          serviceId: 'doctor-service',
+          serviceIds: ['doctor-service'],
+        },
+      },
+    },
+  ]);
+});
+
 test('service features default to false and null never serializes as enabled', () => {
   const pediatric = new Service({ name: 'Pédiatrie' });
   assert.equal(pediatric.a_rdv, false);
@@ -306,6 +565,59 @@ test('service features default to false and null never serializes as enabled', (
   assert.equal(response.a_rdv, false);
   assert.equal(response.a_operations, false);
   assert.equal(response.a_gardes, false);
+  assert.equal(
+    serviceResponse({ _id: 'legacy-surgery', name: 'Chirurgie général' }).name,
+    'Chirurgie générale',
+  );
+});
+
+test('secretary assignment scope excludes a combined doctor fixed service', () => {
+  const secretary = {
+    role: 'secretary',
+    roles: ['doctor', 'secretary'],
+    serviceId: 'doctor-service',
+    serviceIds: ['pediatrics-service'],
+  };
+  assert.deepEqual(serviceIdsFor(secretary), ['pediatrics-service']);
+  assert.equal(
+    doctorMatchesSecretaryServices(
+      { serviceId: 'doctor-service', specialty: 'Pédiatrie' },
+      ['pediatrics-service'],
+      ['pediatrie'],
+    ),
+    true,
+  );
+  assert.equal(
+    doctorMatchesSecretaryServices(
+      { serviceId: 'doctor-service', specialty: 'Cardiologie' },
+      ['pediatrics-service'],
+      ['pediatrie'],
+    ),
+    false,
+  );
+});
+
+test('appointment booking is limited to doctor specialties and radiology', () => {
+  const bookable = (specialty, serviceName, serviceType = 'medical') =>
+    isAppointmentBookableDoctor({
+      specialty,
+      serviceId: {
+        active: true,
+        a_rdv: true,
+        name: serviceName,
+        serviceType,
+      },
+    });
+
+  assert.equal(bookable('Cardiologie', 'Cardiologie'), true);
+  assert.equal(bookable('', 'Radiologie', 'medico_technical'), true);
+  assert.equal(bookable('', 'Pharmacie hospitalière', 'medico_technical'), false);
+  assert.equal(bookable('Pharmacie hospitalière', 'Médecin'), false);
+  assert.equal(bookable('Urgentiste', 'Médecin'), false);
+  assert.equal(bookable('Chirurgie générale', 'Chirurgie général', 'surgical'), false);
+  assert.equal(bookable('Cardiologie', 'Cardiologie', 'surgical'), false);
+  assert.equal(bookable('Urgentiste', 'Urgences', 'emergency'), false);
+  assert.equal(bookable('Biologiste', 'Laboratoire', 'medico_technical'), false);
 });
 
 test('availability returns only unbooked future slots inside doctor shifts', () => {
@@ -332,6 +644,23 @@ test('availability returns only unbooked future slots inside doctor shifts', () 
   assert.deepEqual(
     slots.map((slot) => slot.toISOString()),
     ['2026-03-01T08:00:00.000Z', '2026-03-01T09:30:00.000Z'],
+  );
+});
+
+test('availability keeps future slots when a doctor shift has already started', () => {
+  const slots = generateAvailableSlots(
+    [{
+      start: new Date('2026-11-15T11:00:00.000Z'),
+      end: new Date('2026-11-15T17:00:00.000Z'),
+    }],
+    [],
+    new Date('2026-11-15T00:00:00.000Z'),
+    { now: Date.parse('2026-11-15T16:02:30.854Z') },
+  );
+
+  assert.deepEqual(
+    slots.map((slot) => slot.toISOString()),
+    ['2026-11-15T16:30:00.000Z'],
   );
 });
 

@@ -13,6 +13,40 @@ const {
 
 const FIELDS = ['userId', 'serviceId', 'start', 'end', 'role'];
 
+function normalizeLabel(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function doctorServiceMatchesSpecialty(doctor, service) {
+  const roles = doctor.roles?.length ? doctor.roles : [doctor.role];
+  const specialty = normalizeLabel(doctor.specialty);
+  return roles.includes('doctor') &&
+    specialty.length > 0 &&
+    normalizeLabel(service.name) === specialty;
+}
+
+async function validateDoctorService(userId, serviceId) {
+  const [doctor, service] = await Promise.all([
+    User.findById(userId).select('role roles specialty active'),
+    Service.findById(serviceId).select('name active'),
+  ]);
+  if (!doctor ||
+      doctor.active === false ||
+      !doctorServiceMatchesSpecialty(doctor, service || {})) {
+    throw new HttpError(
+      400,
+      'A shift must use the active service matching an active doctor’s specialty.',
+    );
+  }
+  if (!service || service.active === false) {
+    throw new HttpError(400, 'The doctor specialty service must be active.');
+  }
+}
+
 function shiftResponse(shift) {
   return {
     _id: shift._id,
@@ -84,7 +118,9 @@ async function list(req, res) {
 async function create(req, res) {
   const body = requireObject(req.body);
   rejectUnknownFields(body, FIELDS);
-  const shift = await Shift.create(await parseFields(body, true));
+  const fields = await parseFields(body, true);
+  await validateDoctorService(fields.userId, fields.serviceId);
+  const shift = await Shift.create(fields);
   await populateShift(shift);
   return res.status(201).json({ shift: shiftResponse(shift) });
 }
@@ -100,6 +136,10 @@ async function update(req, res) {
   const start = fields.start || current.start;
   const end = fields.end || current.end;
   if (end <= start) throw new HttpError(400, 'end must be after start.');
+  await validateDoctorService(
+    fields.userId ?? current.userId,
+    fields.serviceId ?? current.serviceId,
+  );
   const shift = await Shift.findByIdAndUpdate(
     id,
     { $set: fields },
@@ -109,4 +149,19 @@ async function update(req, res) {
   return res.json({ shift: shiftResponse(shift) });
 }
 
-module.exports = { list, create, update, shiftResponse };
+async function remove(req, res) {
+  const id = requireId(req.params.id, 'shift id');
+  const shift = await Shift.findById(id);
+  if (!shift) throw new HttpError(404, 'Shift not found.');
+  await shift.deleteOne();
+  return res.json({ shift: shiftResponse(shift) });
+}
+
+module.exports = {
+  list,
+  create,
+  update,
+  remove,
+  shiftResponse,
+  doctorServiceMatchesSpecialty,
+};

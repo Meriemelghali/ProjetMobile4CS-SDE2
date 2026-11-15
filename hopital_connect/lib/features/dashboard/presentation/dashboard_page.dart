@@ -67,6 +67,16 @@ class _DashboardPageState extends State<DashboardPage> {
   List<ServiceColleague> _colleagues = const [];
   PatientRecordType _followUpType = PatientRecordType.all;
 
+  List<StaffUser> get _doctorAccounts => _users
+      .where(
+        (user) =>
+            user.isActive &&
+            (user.role == StaffRole.doctor ||
+                user.assignedRoles.contains(StaffRole.doctor)) &&
+            user.specialty.trim().isNotEmpty,
+      )
+      .toList();
+
   List<HospitalService> get _managedServices =>
       _user.role == StaffRole.serviceHead
       ? _services
@@ -388,17 +398,18 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _addShift() async {
-    if (_services.isEmpty || _users.isEmpty) {
+    final doctors = _doctorAccounts;
+    if (_services.isEmpty || doctors.isEmpty) {
       _showError(
         const ApiException(
-          'Créez au moins un service et un compte du personnel avant d’ajouter une garde.',
+          'Ajoutez un service et un compte médecin actif avec une spécialité avant d’ajouter une garde.',
         ),
       );
       return;
     }
     final draft = await showDialog<Shift>(
       context: context,
-      builder: (_) => NewShiftDialog(services: _services, users: _users),
+      builder: (_) => NewShiftDialog(services: _services, users: doctors),
     );
     if (draft == null || !mounted) return;
     try {
@@ -409,10 +420,81 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  Future<void> _editShift(Shift shift) async {
+    final doctors = _doctorAccounts;
+    if (_services.isEmpty || doctors.isEmpty) {
+      _showError(
+        const ApiException(
+          'Les services et les comptes médecin doivent être disponibles pour modifier une garde.',
+        ),
+      );
+      return;
+    }
+    if (!doctors.any((user) => user.id == shift.userId)) {
+      _showError(
+        const ApiException(
+          'Cette garde n’est pas liée à un médecin actif avec une spécialité.',
+        ),
+      );
+      return;
+    }
+    final edited = await showDialog<Shift>(
+      context: context,
+      builder: (_) =>
+          NewShiftDialog(services: _services, users: doctors, shift: shift),
+    );
+    if (edited == null || !mounted) return;
+    try {
+      await ShiftService().update(edited);
+      await _load();
+    } on ApiException catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _deleteShift(Shift shift) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Supprimer la garde ?'),
+        content: const Text('Cette action ne peut pas être annulée.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await ShiftService().delete(shift.id);
+      await _load();
+    } on ApiException catch (error) {
+      _showError(error);
+    }
+  }
+
   Future<void> _addService() async {
+    List<HospitalRoom> rooms = const [];
+    try {
+      rooms = await HospitalResourceService().rooms();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      _showError(error);
+    }
+    if (!mounted) return;
     final draft = await showDialog<HospitalService>(
       context: context,
-      builder: (_) => ServiceFormDialog(users: _users),
+      builder: (_) => ServiceFormDialog(users: _users, rooms: rooms),
     );
     if (draft == null || !mounted) return;
     try {
@@ -424,13 +506,42 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _editService(HospitalService service) async {
+    List<HospitalRoom> serviceRooms = const [];
+    List<HospitalBed> serviceBeds = const [];
+    try {
+      final resources = HospitalResourceService();
+      final rooms = await resources.rooms();
+      final serviceRoomIds = rooms
+          .where((room) => room.serviceId == service.id)
+          .map((room) => room.id)
+          .toSet();
+      serviceRooms = rooms
+          .where((room) => room.serviceId == service.id)
+          .toList();
+      serviceBeds = (await resources.beds())
+          .where((bed) => serviceRoomIds.contains(bed.roomId))
+          .toList();
+    } on ApiException catch (error) {
+      _showError(error);
+      return;
+    }
     final edited = await showDialog<HospitalService>(
       context: context,
-      builder: (_) => ServiceFormDialog(service: service, users: _users),
+      builder: (_) => ServiceFormDialog(
+        service: service,
+        users: _users,
+        rooms: serviceRooms,
+        beds: serviceBeds,
+        canManageAssignments: _user.role == StaffRole.administrator,
+        canManageStatus: _user.role == StaffRole.administrator,
+      ),
     );
     if (edited == null || !mounted) return;
     try {
-      await ServiceService().update(edited);
+      await ServiceService().update(
+        edited,
+        asServiceHead: _user.role == StaffRole.serviceHead,
+      );
       await _load();
     } on ApiException catch (error) {
       _showError(error);
@@ -446,11 +557,44 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  Future<void> _deleteService(HospitalService service) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Supprimer ce service ?'),
+        content: Text(
+          'Le service « ${service.name} » sera supprimé définitivement. '
+          'La suppression sera refusée s’il est encore utilisé.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFB3261E),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await ServiceService().delete(service.id);
+      await _load();
+    } on ApiException catch (error) {
+      _showError(error);
+    }
+  }
+
   Future<void> _createAppointment() async {
     final draft = await showDialog<AppointmentDraft>(
       context: context,
       builder: (_) => AppointmentFormDialog(
-        services: _services,
         isArabic: _user.language == 'ar' && _user.role == StaffRole.patient,
       ),
     );
@@ -471,7 +615,6 @@ class _DashboardPageState extends State<DashboardPage> {
     final draft = await showDialog<AppointmentDraft>(
       context: context,
       builder: (_) => AppointmentFormDialog(
-        services: _services,
         appointment: appointment,
         isArabic: _user.language == 'ar' && _user.role == StaffRole.patient,
       ),
@@ -690,33 +833,50 @@ class _DashboardPageState extends State<DashboardPage> {
     if (mounted) await _load();
   }
 
-  Future<void> _showShiftDetails(Shift shift) => showDialog<void>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Détail de la garde'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('${shift.day} · ${shift.time}'),
-          const SizedBox(height: 8),
-          Text(
-            'Service : ${shift.serviceName.isEmpty ? 'Non renseigné' : shift.serviceName}',
+  Future<void> _showShiftDetails(Shift shift) async {
+    final isAdmin = _user.role == StaffRole.administrator;
+    final action = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Détail de la garde'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${shift.day} · ${shift.time}'),
+            const SizedBox(height: 8),
+            Text(
+              'Service : ${shift.serviceName.isEmpty ? 'Non renseigné' : shift.serviceName}',
+            ),
+            Text('Fonction : ${shift.role}'),
+            Text(
+              'Personnel : ${shift.userName.isEmpty ? _nameFor(shift.userId) : shift.userName}',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Fermer'),
           ),
-          Text('Fonction : ${shift.role}'),
-          Text(
-            'Personnel : ${shift.userName.isEmpty ? _nameFor(shift.userId) : shift.userName}',
-          ),
+          if (isAdmin) ...[
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'delete'),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('Supprimer'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, 'edit'),
+              child: const Text('Modifier'),
+            ),
+          ],
         ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Fermer'),
-        ),
-      ],
-    ),
-  );
+    );
+    if (!mounted) return;
+    if (action == 'edit') await _editShift(shift);
+    if (action == 'delete') await _deleteShift(shift);
+  }
 
   Future<void> _showHandoverDetails(Handover handover) async {
     if (_user.role != StaffRole.administrator && !handover.isRead) {
@@ -963,7 +1123,9 @@ class _DashboardPageState extends State<DashboardPage> {
             ServiceTab(
               services: _services,
               canEdit: isAdmin,
+              canEditDetails: _user.role == StaffRole.serviceHead,
               onEdit: _editService,
+              onDelete: _deleteService,
               onToggleActive: _toggleServiceActive,
               onAdd: _addService,
             ),
@@ -1303,13 +1465,15 @@ class HomeTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    HospitalService? userService;
-    for (final service in services) {
-      if (service.id == user.serviceId) {
-        userService = service;
-        break;
-      }
-    }
+    final assignedServices = user.role == StaffRole.serviceHead
+        ? services
+              .where(
+                (service) =>
+                    service.id == user.serviceId ||
+                    service.headUserId == user.id,
+              )
+              .toList()
+        : services.where((service) => service.id == user.serviceId).toList();
 
     return ListView(
       padding: const EdgeInsets.all(20),
@@ -1344,7 +1508,9 @@ class HomeTab extends StatelessWidget {
         InfoCard(
           icon: Icons.medical_services_outlined,
           title: 'Mon service',
-          value: userService?.name ?? 'Aucun service attribué',
+          value: assignedServices.isEmpty
+              ? 'Aucun service attribué'
+              : assignedServices.map((service) => service.name).join(', '),
           color: AppColors.blue,
         ),
         const SizedBox(height: 12),

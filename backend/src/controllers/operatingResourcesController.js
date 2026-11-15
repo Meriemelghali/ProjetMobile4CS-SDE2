@@ -758,14 +758,17 @@ async function listEquipment(req, res) {
     query.status = req.query.status;
   }
   if (req.user.role === 'service_head') {
-    const serviceId = serviceIdFor(req.user);
-    const hospitalId = hospitalIdFor(req.user);
-    if (!serviceId || !hospitalId) {
+    const serviceIds = serviceIdsFor(req.user);
+    const hospitalIds = hospitalIdsFor(req.user);
+    if (!serviceIds.length || !hospitalIds.length) {
       throw new HttpError(403, 'A hospital and service assignment are required.');
     }
-    if (query.hospitalId) assertHospitalScope(req.user, query.hospitalId);
-    query.hospitalId = hospitalId;
-    query.serviceId = serviceId;
+    if (query.hospitalId) {
+      assertHospitalScope(req.user, query.hospitalId);
+    } else {
+      query.hospitalId = { $in: hospitalIds };
+    }
+    query.serviceId = { $in: serviceIds };
     query.operatingRoomId = null;
   } else if (req.user.role === 'operating_room_manager') {
     const hospitalId = hospitalIdFor(req.user);

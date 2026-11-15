@@ -1,6 +1,7 @@
 const Appointment = require('../models/Appointment');
 const Notification = require('../models/Notification');
 const Shift = require('../models/Shift');
+const Service = require('../models/Service');
 const User = require('../models/User');
 const { HttpError } = require('../errors');
 const {
@@ -32,8 +33,67 @@ const STATUS_TRANSITIONS = {
 
 function serviceIdsFor(user) {
   const ids = (user.serviceIds || []).map((id) => id.toString());
-  if (user.serviceId) ids.push(user.serviceId.toString());
+  const isDoctor = user.role === 'doctor' || user.roles?.includes('doctor');
+  if (user.serviceId && !isDoctor) ids.push(user.serviceId.toString());
   return [...new Set(ids)];
+}
+
+function normalizeLabel(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function isAppointmentBookableDoctor(doctor) {
+  const service = doctor?.serviceId;
+  if (!service || service.active !== true || service.a_rdv !== true) {
+    return false;
+  }
+
+  const specialty = normalizeLabel(doctor.specialty);
+  const serviceName = normalizeLabel(service.name);
+  const serviceType = normalizeLabel(service.serviceType);
+  if (
+    /surgical|chirurg|surgery|emergency|urgenc|intensive.care|administrative/.test(
+      serviceType,
+    ) ||
+    /chirurg|surgery|emergency|urgenc|urgent|intensive.care|pharmacie|laboratoire|administratif/.test(
+      specialty,
+    ) ||
+    /chirurg|surgery|emergency|urgenc|pharmacie|laboratoire|soins intensifs/.test(
+      serviceName,
+    )
+  ) {
+    return false;
+  }
+
+  const isRadiology =
+    /radiolog/.test(specialty) || /radiolog/.test(serviceName);
+  if (serviceType === 'medico_technical' && !isRadiology) return false;
+
+  return specialty.length > 0 || isRadiology;
+}
+
+async function secretaryServiceNames(user) {
+  const ids = serviceIdsFor(user);
+  if (!ids.length) return [];
+  const services = await Service.find({ _id: { $in: ids } }).select('name');
+  return services.map((service) => normalizeLabel(service.name));
+}
+
+function doctorMatchesSecretaryServices(doctor, serviceIds, serviceNames) {
+  const doctorServiceId = doctor.serviceId?._id || doctor.serviceId;
+  return serviceIds.includes(doctorServiceId?.toString()) ||
+    serviceNames.includes(normalizeLabel(doctor.specialty));
+}
+
+async function secretaryCanAccessDoctor(user, doctor) {
+  const serviceIds = serviceIdsFor(user);
+  if (!serviceIds.length) return false;
+  const serviceNames = await secretaryServiceNames(user);
+  return doctorMatchesSecretaryServices(doctor, serviceIds, serviceNames);
 }
 
 function appointmentResponse(appointment) {
@@ -92,13 +152,14 @@ async function notifyPatient(appointment, title, message) {
 }
 
 async function doctorIsBookable(doctorId) {
-  return User.findOne({
+  const doctor = await User.findOne({
     _id: doctorId,
-    active: true,
+    active: { $ne: false },
     $or: [{ role: 'doctor' }, { roles: 'doctor' }],
   })
-    .select('serviceId serviceIds')
-    .populate('serviceId', 'name location phone email active a_rdv');
+    .select('serviceId serviceIds specialty')
+    .populate('serviceId', 'name location phone email active a_rdv serviceType');
+  return isAppointmentBookableDoctor(doctor) ? doctor : null;
 }
 
 function generateAvailableSlots(
@@ -128,9 +189,10 @@ function generateAvailableSlots(
     let slotStart = Math.ceil(shiftStart / SLOT_DURATION_MS) * SLOT_DURATION_MS;
     for (
       ;
-      slotStart + SLOT_DURATION_MS <= shiftEnd && slotStart > now;
+      slotStart + SLOT_DURATION_MS <= shiftEnd;
       slotStart += SLOT_DURATION_MS
     ) {
+      if (slotStart <= now) continue;
       const overlaps = busyIntervals.some(
         (busyStart) =>
           slotStart < busyStart + SLOT_DURATION_MS &&
@@ -142,7 +204,7 @@ function generateAvailableSlots(
   return [...slotTimes].sort((a, b) => a - b).map((time) => new Date(time));
 }
 
-async function findAvailableSlots(doctorId, date, excludeAppointmentId = null) {
+async function loadAvailability(doctorId, date, excludeAppointmentId = null) {
   const dayStart = requireDateOnly(date);
   const [shifts, appointments] = await Promise.all([
     Shift.find({
@@ -156,9 +218,22 @@ async function findAvailableSlots(doctorId, date, excludeAppointmentId = null) {
       ...(excludeAppointmentId ? { _id: { $ne: excludeAppointmentId } } : {}),
     }).select('startAt proposedStartAt status').limit(500),
   ]);
-  return generateAvailableSlots(shifts, appointments, dayStart, {
+  return {
+    shifts,
+    appointments,
+    slots: generateAvailableSlots(shifts, appointments, dayStart, {
+      excludeAppointmentId,
+    }),
+  };
+}
+
+async function findAvailableSlots(doctorId, date, excludeAppointmentId = null) {
+  const availability = await loadAvailability(
+    doctorId,
+    date,
     excludeAppointmentId,
-  });
+  );
+  return availability.slots;
 }
 
 async function assertSlotAvailable(doctorId, startAt, excludeAppointmentId = null) {
@@ -172,6 +247,7 @@ async function assertSlotAvailable(doctorId, startAt, excludeAppointmentId = nul
 async function parseFields(body, {
   creating = false,
   secretary = false,
+  secretaryUser = null,
   patientUpdate = false,
 } = {}) {
   const fields = {};
@@ -190,6 +266,10 @@ async function parseFields(body, {
         doctor.serviceId.active !== true ||
         doctor.serviceId.a_rdv !== true) {
       throw new HttpError(400, 'doctorId must refer to an active doctor in an active service.');
+    }
+    if (secretaryUser &&
+        !(await secretaryCanAccessDoctor(secretaryUser, doctor))) {
+      throw new HttpError(403, 'This doctor is outside your assigned services.');
     }
   }
   if (creating || body.startAt !== undefined) {
@@ -212,23 +292,28 @@ async function parseFields(body, {
 async function listDoctors(req, res) {
   const filters = [
     { $or: [{ role: 'doctor' }, { roles: 'doctor' }] },
-    { active: true },
+    { active: { $ne: false } },
   ];
   const requestedServiceId = req.query.serviceId === undefined
     ? null
     : requireId(req.query.serviceId, 'serviceId');
+  let secretaryServiceIds = [];
+  let secretarySpecialties = [];
   if (req.user.role === 'secretary') {
-    const ids = serviceIdsFor(req.user);
-    if (requestedServiceId && !ids.includes(requestedServiceId)) {
+    secretaryServiceIds = serviceIdsFor(req.user);
+    if (requestedServiceId &&
+        !secretaryServiceIds.includes(requestedServiceId)) {
       return res.json({ doctors: [] });
     }
-    const assignedIds = requestedServiceId ? [requestedServiceId] : ids;
-    filters.push({
-      $or: [
-        { serviceId: { $in: assignedIds } },
-        { serviceIds: { $in: assignedIds } },
-      ],
-    });
+    const assignedIds = requestedServiceId
+      ? [requestedServiceId]
+      : secretaryServiceIds;
+    const services = assignedIds.length
+      ? await Service.find({ _id: { $in: assignedIds } }).select('name')
+      : [];
+    secretarySpecialties = services.map((service) =>
+      normalizeLabel(service.name)
+    );
   } else if (requestedServiceId) {
     filters.push({
       $or: [
@@ -239,23 +324,31 @@ async function listDoctors(req, res) {
   }
   const doctors = await User.find({ $and: filters })
     .select('username serviceId specialty photoUrl')
-    .populate('serviceId', 'name location phone email active a_rdv')
+    .populate('serviceId', 'name location phone email active a_rdv serviceType')
     .sort({ username: 1 })
     .limit(200);
+  const bookableDoctors = doctors.filter(isAppointmentBookableDoctor);
   return res.json({
-    doctors: doctors.filter((doctor) =>
-      doctor.serviceId?.active === true && doctor.serviceId?.a_rdv === true
-    ).map((doctor) => ({
+    doctors: bookableDoctors
+      .filter((doctor) =>
+        req.user.role !== 'secretary' ||
+        doctorMatchesSecretaryServices(
+          doctor,
+          secretaryServiceIds,
+          secretarySpecialties,
+        )
+      )
+      .map((doctor) => ({
       _id: doctor._id,
       username: doctor.username,
-      specialty: doctor.specialty || '',
+      specialty: doctor.specialty || 'Radiologie',
       photoUrl: doctor.photoUrl || '',
       serviceId: doctor.serviceId?._id || doctor.serviceId || null,
       serviceName: doctor.serviceId?.name || '',
       serviceLocation: doctor.serviceId?.location || '',
       servicePhone: doctor.serviceId?.phone || '',
       serviceEmail: doctor.serviceId?.email || '',
-    })),
+      })),
   });
 }
 
@@ -265,14 +358,19 @@ async function list(req, res) {
   if (req.user.role === 'doctor') query.doctorId = req.user._id;
   if (req.user.role === 'secretary') {
     const ids = serviceIdsFor(req.user);
+    const specialties = await secretaryServiceNames(req.user);
     const doctors = ids.length
-      ? await User.find({
-          active: true,
+      ? (await User.find({
+          active: { $ne: false },
           $and: [
             { $or: [{ role: 'doctor' }, { roles: 'doctor' }] },
-            { $or: [{ serviceId: { $in: ids } }, { serviceIds: { $in: ids } }] },
           ],
-        }).select('_id')
+        })
+          .select('_id serviceId specialty')
+          .populate('serviceId', 'name'))
+        .filter((doctor) =>
+          doctorMatchesSecretaryServices(doctor, ids, specialties)
+        )
       : [];
     query.doctorId = { $in: doctors.map((doctor) => doctor._id) };
   }
@@ -303,16 +401,30 @@ async function available(req, res) {
   }
   const doctorServiceId = doctor.serviceId._id?.toString() || doctor.serviceId.toString();
   if (req.user.role === 'secretary' &&
-      !serviceIdsFor(req.user).includes(doctorServiceId)) {
+      !(await secretaryCanAccessDoctor(req.user, doctor))) {
     throw new HttpError(403, 'This doctor is outside your assigned services.');
   }
-  const slots = await findAvailableSlots(doctorId, date);
+  const availability = await loadAvailability(doctorId, date);
+  const { slots } = availability;
+  if (slots.length === 0) {
+    console.warn('[appointments] No available slots:', {
+      doctorId,
+      date,
+      now: new Date().toISOString(),
+      shifts: availability.shifts.map(({ start, end }) => ({ start, end })),
+      activeAppointmentsLoaded: availability.appointments.length,
+    });
+  }
+  res.set('Cache-Control', 'no-store');
   return res.json({ durationMinutes: SLOT_DURATION_MS / 60000, slots });
 }
 
 async function create(req, res) {
   const body = requireObject(req.body);
-  const fields = await parseFields(body, { creating: true });
+  const fields = await parseFields(body, {
+    creating: true,
+    secretaryUser: req.user.role === 'secretary' ? req.user : null,
+  });
   await assertSlotAvailable(fields.doctorId, fields.startAt);
   let appointment;
   try {
@@ -337,12 +449,10 @@ async function create(req, res) {
   return res.status(201).json({ appointment: appointmentResponse(appointment) });
 }
 
-function canAccessService(user, appointment) {
+async function canAccessService(user, appointment) {
   if (user.role === 'admin') return true;
   if (user.role !== 'secretary') return false;
-  const serviceId = appointment.doctorId?.serviceId?._id ||
-    appointment.doctorId?.serviceId;
-  return serviceIdsFor(user).includes(serviceId?.toString());
+  return secretaryCanAccessDoctor(user, appointment.doctorId);
 }
 
 async function update(req, res) {
@@ -353,6 +463,7 @@ async function update(req, res) {
   const isPatient = req.user.role === 'patient';
   const fields = await parseFields(body, {
     secretary: isManager,
+    secretaryUser: isSecretary ? req.user : null,
     patientUpdate: isPatient,
   });
   if (!Object.keys(fields).length) {
@@ -361,14 +472,14 @@ async function update(req, res) {
 
   const current = await Appointment.findById(id).populate({
     path: 'doctorId',
-    select: 'serviceId',
+    select: 'serviceId specialty',
     populate: { path: 'serviceId', select: 'name' },
   });
   if (!current) throw new HttpError(404, 'Appointment not found.');
   if (isPatient && current.patientId.toString() !== req.user._id.toString()) {
     throw new HttpError(404, 'Appointment not found.');
   }
-  if (isSecretary && !canAccessService(req.user, current)) {
+  if (isSecretary && !(await canAccessService(req.user, current))) {
     throw new HttpError(404, 'Appointment not found.');
   }
   if (current.status === 'cancelled' || current.status === 'rejected') {
@@ -463,11 +574,12 @@ async function claim(req, res) {
   const id = requireId(req.params.id, 'appointment id');
   const current = await Appointment.findById(id).populate({
     path: 'doctorId',
-    select: 'serviceId',
+    select: 'serviceId specialty',
     populate: { path: 'serviceId', select: 'name' },
   });
   if (!current) throw new HttpError(404, 'Appointment not found.');
-  if (req.user.role === 'secretary' && !canAccessService(req.user, current)) {
+  if (req.user.role === 'secretary' &&
+      !(await canAccessService(req.user, current))) {
     throw new HttpError(404, 'Appointment not found.');
   }
   const expiredBefore = new Date(Date.now() - CLAIM_DURATION_MS);
@@ -497,11 +609,12 @@ async function release(req, res) {
   const id = requireId(req.params.id, 'appointment id');
   const current = await Appointment.findById(id).populate({
     path: 'doctorId',
-    select: 'serviceId',
+    select: 'serviceId specialty',
     populate: { path: 'serviceId', select: 'name' },
   });
   if (!current) throw new HttpError(404, 'Appointment not found.');
-  if (req.user.role === 'secretary' && !canAccessService(req.user, current)) {
+  if (req.user.role === 'secretary' &&
+      !(await canAccessService(req.user, current))) {
     throw new HttpError(404, 'Appointment not found.');
   }
   const filter = { _id: id, status: 'pending' };
@@ -532,11 +645,12 @@ async function decide(req, res) {
   }
   const current = await Appointment.findById(id).populate({
     path: 'doctorId',
-    select: 'serviceId',
+    select: 'serviceId specialty',
     populate: { path: 'serviceId', select: 'name' },
   });
   if (!current) throw new HttpError(404, 'Appointment not found.');
-  if (req.user.role === 'secretary' && !canAccessService(req.user, current)) {
+  if (req.user.role === 'secretary' &&
+      !(await canAccessService(req.user, current))) {
     throw new HttpError(404, 'Appointment not found.');
   }
   if (current.status !== 'pending') {
@@ -682,6 +796,9 @@ module.exports = {
   findAvailableSlots,
   generateAvailableSlots,
   STATUS_TRANSITIONS,
+  isAppointmentBookableDoctor,
+  serviceIdsFor,
+  doctorMatchesSecretaryServices,
   SLOT_DURATION_MS,
   CLAIM_DURATION_MS,
   OVERDUE_AFTER_MS,

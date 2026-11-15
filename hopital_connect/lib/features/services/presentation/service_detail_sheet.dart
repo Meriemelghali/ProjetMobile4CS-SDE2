@@ -16,16 +16,14 @@ import 'service_qr_dialog.dart';               // Dialog QR code
 /// Palette de couleurs par type de service (identique à service_card.dart).
 /// Définie ici pour que le bottom sheet utilise les mêmes couleurs que les cartes.
 const Map<ServiceType, Color> _typeColors = {
-  ServiceType.medecine:    Color(0xFF176B87),
-  ServiceType.chirurgie:   Color(0xFF8B45A0),
-  ServiceType.urgences:    Color(0xFFD64045),
-  ServiceType.pediatrie:   Color(0xFF36A98B),
-  ServiceType.gynecologie: Color(0xFFE0689A),
-  ServiceType.radiologie:  Color(0xFF5B6BBF),
-  ServiceType.laboratoire: Color(0xFFE8891A),
-  ServiceType.reanimation: Color(0xFFC0392B),
-  ServiceType.psychiatrie: Color(0xFF2E7D32),
-  ServiceType.autre:       Color(0xFF607D8B),
+  ServiceType.medical: Color(0xFF176B87),
+  ServiceType.surgical: Color(0xFF8B45A0),
+  ServiceType.emergency: Color(0xFFD64045),
+  ServiceType.intensiveCare: Color(0xFFC0392B),
+  ServiceType.maternity: Color(0xFFE0689A),
+  ServiceType.medicoTechnical: Color(0xFF5B6BBF),
+  ServiceType.administrative: Color(0xFFE8891A),
+  ServiceType.other: Color(0xFF607D8B),
 };
 
 /// Bottom sheet de détail complet d'un service hospitalier.
@@ -35,12 +33,14 @@ class ServiceDetailSheet extends StatelessWidget {
     super.key,
     required this.service,  // Service dont on affiche le détail (obligatoire)
     this.canEdit = false,   // false = lecture seule, true = boutons admin visibles
+    this.canEditDetails = false,
     this.onEdit,            // Callback déclenché quand l'admin clique "Modifier"
     this.onToggleActive,    // Callback déclenché quand l'admin clique toggle
   });
 
   final HospitalService service;
   final bool canEdit;
+  final bool canEditDetails;
   final VoidCallback? onEdit;
   final VoidCallback? onToggleActive;
 
@@ -303,7 +303,7 @@ class ServiceDetailSheet extends StatelessWidget {
                     // --------------------------------------------------------
                     // BOUTONS ADMIN (seulement si canEdit = true)
                     // --------------------------------------------------------
-                    if (canEdit) ...[
+                    if (canEdit || canEditDetails) ...[
                       const SizedBox(height: 24),
                       const Divider(height: 1, color: Color(0xFFEEF2F4)),
                       const SizedBox(height: 16),
@@ -324,35 +324,34 @@ class ServiceDetailSheet extends StatelessWidget {
                         ),
                       ),
 
-                      const SizedBox(height: 10),
-
-                      // Bouton "Désactiver" (rouge) ou "Réactiver" (vert) pleine largeur
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: onToggleActive, // Déclenche le callback toggle
-                          icon: Icon(isActive
-                              ? Icons.toggle_off_outlined // Icône éteindre si actif
-                              : Icons.toggle_on_outlined), // Icône allumer si inactif
-                          label: Text(isActive
-                              ? 'Désactiver ce service'
-                              : 'Réactiver ce service'),
-                          style: OutlinedButton.styleFrom(
-                            // Rouge pour désactiver (action destructive), vert pour réactiver
-                            foregroundColor: isActive
-                                ? const Color(0xFFD64045)
-                                : AppColors.mint,
-                            side: BorderSide(
-                              color: isActive
+                      if (canEdit) ...[
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: onToggleActive,
+                            icon: Icon(isActive
+                                ? Icons.toggle_off_outlined
+                                : Icons.toggle_on_outlined),
+                            label: Text(isActive
+                                ? 'Désactiver ce service'
+                                : 'Réactiver ce service'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: isActive
                                   ? const Color(0xFFD64045)
                                   : AppColors.mint,
+                              side: BorderSide(
+                                color: isActive
+                                    ? const Color(0xFFD64045)
+                                    : AppColors.mint,
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
                             ),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
                           ),
                         ),
-                      ),
+                      ],
                     ],
 
                   ],

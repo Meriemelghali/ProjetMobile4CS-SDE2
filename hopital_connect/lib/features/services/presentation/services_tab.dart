@@ -93,14 +93,18 @@ class ServiceTab extends StatefulWidget {
     super.key,
     required this.services,     // Liste complète des services (obligatoire)
     this.canEdit = false,       // true = admin, affiche les boutons de modification
+    this.canEditDetails = false,
     this.onEdit,                // Callback quand l'admin valide une modification
+    this.onDelete,
     this.onToggleActive,        // Callback quand l'admin toggle actif/inactif
     this.onAdd,                 // Callback quand l'admin clique sur "Nouveau service"
   });
 
   final List<HospitalService> services;
   final bool canEdit;
+  final bool canEditDetails;
   final ValueChanged<HospitalService>? onEdit;
+  final ValueChanged<HospitalService>? onDelete;
   final ValueChanged<HospitalService>? onToggleActive;
   final VoidCallback? onAdd;
 
@@ -226,7 +230,8 @@ class _ServiceTabState extends State<ServiceTab> {
       backgroundColor: Colors.transparent, // Fond transparent pour voir les coins arrondis
       builder: (_) => ServiceDetailSheet(
         service: service,
-        canEdit: widget.canEdit,          // Passe le droit d'édition
+        canEdit: widget.canEdit,
+        canEditDetails: widget.canEditDetails,
 
         // Callback édition : ferme d'abord le bottom sheet, puis ouvre le formulaire
         onEdit: () {
@@ -515,7 +520,9 @@ class _ServiceTabState extends State<ServiceTab> {
                         child: ServiceCard(
                           service: service,
                           canEdit: widget.canEdit,
+                          canEditDetails: widget.canEditDetails,
                           onEdit: () => widget.onEdit?.call(service),
+                          onDelete: () => widget.onDelete?.call(service),
                           onToggleActive: () => widget.onToggleActive?.call(service),
                           onTap: () => _showDetail(service), // Ouvre le bottom sheet de détail
                         ),
