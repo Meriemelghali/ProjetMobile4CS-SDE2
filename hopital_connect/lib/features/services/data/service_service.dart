@@ -85,7 +85,10 @@ class ServiceService {
   /// Met à jour un service existant sur le backend.
   /// Endpoint : PUT /services/:id
   /// Valide l'id et le nom localement avant d'envoyer la requête.
-  Future<HospitalService> update(HospitalService service) async {
+  Future<HospitalService> update(
+    HospitalService service, {
+    bool asServiceHead = false,
+  }) async {
     // Validation locale : l'id doit être présent (non vide)
     if (service.id.isEmpty) {
       throw const ApiException('Identifiant du service manquant.');
@@ -97,9 +100,23 @@ class ServiceService {
     }
 
     // Envoie la mise à jour avec l'id dans l'URL
+    final body = asServiceHead
+        ? <String, Object?>{
+            'name': service.name,
+            'description': service.description,
+            'location': service.location,
+            'serviceType': service.serviceType.apiValue,
+            'building': service.building,
+            'floor': service.floor,
+            'phone': service.phone,
+            'email': service.email,
+            'openingHours': service.openingHours,
+            'notes': service.notes,
+          }
+        : service.toJson();
     final response = await _api.put(
       '/services/${service.id}', // URL dynamique avec l'id du service
-      body: service.toJson(),    // Corps de la requête : champs modifiés
+      body: body,
     );
 
     // Extrait l'objet 'service' mis à jour de la réponse
@@ -112,6 +129,13 @@ class ServiceService {
 
     // Désérialise et retourne le service mis à jour
     return HospitalService.fromJson(data);
+  }
+
+  Future<void> delete(String id) async {
+    if (id.isEmpty) {
+      throw const ApiException('Identifiant du service manquant.');
+    }
+    await _api.delete('/services/$id');
   }
 
   // --------------------------------------------------------------------------

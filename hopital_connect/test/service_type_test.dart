@@ -1,12 +1,34 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hopital_connect/features/dashboard/presentation/doctor_space_tabs.dart';
+import 'package:hopital_connect/features/hospital/domain/hospital_resources.dart';
 import 'package:hopital_connect/features/services/domain/hospital_service.dart';
 import 'package:hopital_connect/features/services/presentation/service_form_dialog.dart';
 import 'package:hopital_connect/features/auth/presentation/role_selection_page.dart';
 import 'package:hopital_connect/features/users/domain/staff_role.dart';
 import 'package:hopital_connect/features/users/domain/staff_user.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+const _floorRooms = [
+  HospitalRoom(
+    id: 'room-1',
+    hospitalId: 'hospital-1',
+    serviceId: 'service-1',
+    number: 1,
+    floor: '1',
+    type: RoomType.single,
+    status: RoomStatus.available,
+  ),
+  HospitalRoom(
+    id: 'room-2',
+    hospitalId: 'hospital-1',
+    serviceId: 'service-2',
+    number: 2,
+    floor: '2',
+    type: RoomType.single,
+    status: RoomStatus.available,
+  ),
+];
 
 void main() {
   setUp(() {
@@ -204,6 +226,55 @@ void main() {
     ]);
     expect(user.hospitalId, 'hospital-1');
     expect(user.serviceId, 'service-1');
+  });
+
+  testWidgets('service location only offers registered floors', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ServiceFormDialog(
+            service: const HospitalService(
+              id: 'service-1',
+              name: 'Cardiologie',
+              location: '1',
+              description: '',
+              floor: '1',
+            ),
+            rooms: _floorRooms,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Lieu'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bâtiment'), findsNothing);
+    expect(find.byType(TextFormField), findsNothing);
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pumpAndSettle();
+    expect(find.text('Étage 1'), findsNWidgets(2));
+    expect(find.text('Étage 2'), findsNothing);
+  });
+
+  testWidgets('new service floor choices use existing room floors', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: ServiceFormDialog(rooms: _floorRooms)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Lieu'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bâtiment'), findsNothing);
+    expect(find.byType(TextFormField), findsNothing);
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pumpAndSettle();
+    expect(find.text('Étage 1'), findsOneWidget);
+    expect(find.text('Étage 2'), findsOneWidget);
   });
 
   testWidgets('multiple assigned roles are offered after login', (

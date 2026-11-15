@@ -10,7 +10,8 @@ const {
   assertRoomScope,
   assertServiceScope,
   hospitalIdFor,
-  serviceIdFor,
+  hospitalIdsFor,
+  serviceIdsFor,
 } = require('../middleware/resourceAccess');
 const { HttpError } = require('../errors');
 const {
@@ -120,13 +121,13 @@ async function parseHospitalFields(body, creating = false) {
 async function listHospitals(req, res) {
   const query = {};
   if (req.user.role === 'service_head') {
-    const serviceId = serviceIdFor(req.user);
-    const hospitalId = hospitalIdFor(req.user);
-    if (!serviceId || !hospitalId) {
+    const serviceIds = serviceIdsFor(req.user);
+    const hospitalIds = hospitalIdsFor(req.user);
+    if (!serviceIds.length || !hospitalIds.length) {
       throw new HttpError(403, 'A hospital and service assignment are required.');
     }
-    query._id = hospitalId;
-    query.serviceIds = serviceId;
+    query._id = { $in: hospitalIds };
+    query.serviceIds = { $in: serviceIds };
   } else if (req.user.role === 'operating_room_manager') {
     const hospitalId = hospitalIdFor(req.user);
     if (!hospitalId) throw new HttpError(403, 'A hospital assignment is required.');
@@ -210,13 +211,15 @@ async function validateRoomFields(fields, current = null) {
   if (!(await Hospital.exists({ _id: hospitalId }))) throw new HttpError(400, 'hospitalId does not exist.');
   await validateServiceForHospital(hospitalId, serviceId);
   const number = fields.number === undefined ? current?.number : fields.number;
+  const floor = fields.floor === undefined ? current?.floor : fields.floor;
   const currentId = current?._id;
   if (number !== undefined && await Room.exists({
     serviceId,
+    floor,
     number,
     ...(currentId ? { _id: { $ne: currentId } } : {}),
   })) {
-    throw new HttpError(409, 'Room number must be unique within its service.');
+    throw new HttpError(409, 'Room number must be unique within its service and floor.');
   }
   if (current && fields.capacity !== undefined) {
     const bedCount = await Bed.countDocuments({ roomId: current?._id });
@@ -268,14 +271,17 @@ async function listRooms(req, res) {
     query.hospitalId = requireId(req.query.hospitalId, 'hospitalId');
   }
   if (req.user.role === 'service_head') {
-    const serviceId = serviceIdFor(req.user);
-    const hospitalId = hospitalIdFor(req.user);
-    if (!serviceId || !hospitalId) {
+    const serviceIds = serviceIdsFor(req.user);
+    const hospitalIds = hospitalIdsFor(req.user);
+    if (!serviceIds.length || !hospitalIds.length) {
       throw new HttpError(403, 'A hospital and service assignment are required.');
     }
-    if (query.hospitalId) assertHospitalScope(req.user, query.hospitalId);
-    query.hospitalId = hospitalId;
-    query.serviceId = serviceId;
+    if (query.hospitalId) {
+      assertHospitalScope(req.user, query.hospitalId);
+    } else {
+      query.hospitalId = { $in: hospitalIds };
+    }
+    query.serviceId = { $in: serviceIds };
   } else if (req.user.role === 'operating_room_manager') {
     const hospitalId = hospitalIdFor(req.user);
     if (!hospitalId) throw new HttpError(403, 'A hospital assignment is required.');
@@ -362,12 +368,15 @@ async function listBeds(req, res) {
     }
     query.roomId = roomId;
   } else if (req.user.role === 'service_head') {
-    const serviceId = serviceIdFor(req.user);
-    const hospitalId = hospitalIdFor(req.user);
-    if (!serviceId || !hospitalId) {
+    const serviceIds = serviceIdsFor(req.user);
+    const hospitalIds = hospitalIdsFor(req.user);
+    if (!serviceIds.length || !hospitalIds.length) {
       throw new HttpError(403, 'A hospital and service assignment are required.');
     }
-    const rooms = await Room.find({ hospitalId, serviceId }).select('_id');
+    const rooms = await Room.find({
+      hospitalId: { $in: hospitalIds },
+      serviceId: { $in: serviceIds },
+    }).select('_id');
     query.roomId = { $in: rooms.map((room) => room._id) };
   } else if (req.user.role === 'operating_room_manager') {
     const hospitalId = hospitalIdFor(req.user);
@@ -544,6 +553,7 @@ module.exports = {
   deleteBed,
   assignBed,
   dischargeBed,
+  validateRoomFields,
   hospitalResponse,
   roomResponse,
   bedResponse,

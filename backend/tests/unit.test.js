@@ -8,8 +8,15 @@ const {
 } = require('../src/controllers/authController');
 const { HttpError } = require('../src/errors');
 const { authorize } = require('../src/middleware/authorize');
-const { assertRoomScope } = require('../src/middleware/resourceAccess');
-const { serviceResponse } = require('../src/controllers/servicesController');
+const {
+  assertRoomScope,
+  attachServiceHeadScope,
+} = require('../src/middleware/resourceAccess');
+const {
+  hasServiceReferences,
+  list: listServices,
+  serviceResponse,
+} = require('../src/controllers/servicesController');
 const {
   doctorServiceMatchesSpecialty,
   shiftResponse,
@@ -31,6 +38,7 @@ const {
   bedResponse,
   occupancyResponse,
   roomResponse,
+  validateRoomFields,
 } = require('../src/controllers/hospitalResourcesController');
 const {
   equipmentResponse,
@@ -65,8 +73,9 @@ const {
   verifyToken,
 } = require('../src/services/auth');
 const Intervention = require('../src/models/Intervention');
-const User = require('../src/models/User');
+const Hospital = require('../src/models/Hospital');
 const Room = require('../src/models/Room');
+const User = require('../src/models/User');
 const Bed = require('../src/models/Bed');
 const OperatingRoom = require('../src/models/OperatingRoom');
 const Equipment = require('../src/models/Equipment');
@@ -140,6 +149,49 @@ test('room number uniqueness is scoped to a service', () => {
     floor: 1,
     number: 1,
   });
+});
+
+test('room numbers can repeat on different floors but not the same service floor', async () => {
+  const originalHospitalExists = Hospital.exists;
+  const originalRoomExists = Room.exists;
+  const duplicateQueries = [];
+  Hospital.exists = async () => true;
+  Room.exists = async (query) => {
+    duplicateQueries.push(query);
+    return null;
+  };
+
+  try {
+    await validateRoomFields({
+      hospitalId: 'hospital-id',
+      serviceId: 'service-id',
+      floor: '3',
+      number: 1,
+    });
+    Room.exists = async (query) => {
+      duplicateQueries.push(query);
+      return true;
+    };
+    await assert.rejects(
+      validateRoomFields({
+        hospitalId: 'hospital-id',
+        serviceId: 'service-id',
+        floor: '1',
+        number: 1,
+      }),
+      (error) => error instanceof HttpError &&
+        error.status === 409 &&
+        error.message.includes('service and floor'),
+    );
+  } finally {
+    Hospital.exists = originalHospitalExists;
+    Room.exists = originalRoomExists;
+  }
+
+  assert.deepEqual(duplicateQueries, [
+    { serviceId: 'service-id', floor: '3', number: 1 },
+    { serviceId: 'service-id', floor: '1', number: 1 },
+  ]);
 });
 
 test('service managers cannot access rooms outside their assigned hospital or service', () => {
@@ -357,6 +409,108 @@ test('default doctor service is enabled and linked to existing hospitals', async
     filter: {},
     update: { $addToSet: { serviceIds: service._id } },
   });
+});
+
+test('service deletion is blocked when operational records reference it', async () => {
+  const models = {
+    userModel: { exists: async () => null },
+    shiftModel: { exists: async () => null },
+    roomModel: { exists: async () => null },
+    operatingRoomModel: { exists: async () => null },
+    equipmentModel: { exists: async () => ({ _id: 'equipment-id' }) },
+    handoverModel: { exists: async () => null },
+    medicationRequestModel: { exists: async () => null },
+  };
+
+  assert.equal(await hasServiceReferences('service-id', models), true);
+  models.equipmentModel.exists = async () => null;
+  assert.equal(await hasServiceReferences('service-id', models), false);
+});
+
+test('service heads receive all managed services and their legacy assignment', async () => {
+  const originalFind = Service.find;
+  const managedServiceIds = ['managed-one', 'managed-two'];
+  const queries = [];
+  Service.find = (query) => {
+    queries.push(query);
+    return {
+      sort() {
+        return this;
+      },
+      limit: async () => [],
+    };
+  };
+
+  const runList = (user) =>
+    listServices({ user }, { json: (body) => body });
+
+  try {
+    await runList({
+      _id: 'head-id',
+      role: 'service_head',
+      roles: ['service_head'],
+      serviceId: 'legacy-assignment',
+      $locals: {
+        serviceHeadServiceIds: [...managedServiceIds, 'legacy-assignment'],
+      },
+    });
+    await runList({
+      _id: 'doctor-head-id',
+      role: 'service_head',
+      roles: ['doctor', 'service_head'],
+      serviceId: 'doctor-default-service',
+      $locals: { serviceHeadServiceIds: managedServiceIds },
+    });
+  } finally {
+    Service.find = originalFind;
+  }
+
+  assert.deepEqual(queries[0]._id, {
+    $in: ['managed-one', 'managed-two', 'legacy-assignment'],
+  });
+  assert.deepEqual(queries[1]._id, {
+    $in: ['managed-one', 'managed-two'],
+  });
+});
+
+test('service head resource scope includes hospitals for every managed service', async () => {
+  const serviceQueries = [];
+  const hospitalQueries = [];
+  const user = {
+    _id: 'head-id',
+    role: 'service_head',
+    roles: ['service_head'],
+    serviceId: 'legacy-service',
+    hospitalId: 'legacy-hospital',
+  };
+
+  await attachServiceHeadScope(user, {
+    serviceModel: {
+      find(query) {
+        serviceQueries.push(query);
+        return { distinct: async () => ['managed-service'] };
+      },
+    },
+    hospitalModel: {
+      find(query) {
+        hospitalQueries.push(query);
+        return { distinct: async () => ['managed-hospital', 'legacy-hospital'] };
+      },
+    },
+  });
+
+  assert.deepEqual(serviceQueries, [{ headUserId: 'head-id' }]);
+  assert.deepEqual(hospitalQueries, [{
+    serviceIds: { $in: ['managed-service', 'legacy-service'] },
+  }]);
+  assert.deepEqual(user.$locals.serviceHeadServiceIds, [
+    'managed-service',
+    'legacy-service',
+  ]);
+  assert.deepEqual(user.$locals.serviceHeadHospitalIds, [
+    'managed-hospital',
+    'legacy-hospital',
+  ]);
 });
 
 test('existing doctors are moved to the default service without losing secretary assignments', async () => {

@@ -484,9 +484,17 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _addService() async {
+    List<HospitalRoom> rooms = const [];
+    try {
+      rooms = await HospitalResourceService().rooms();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      _showError(error);
+    }
+    if (!mounted) return;
     final draft = await showDialog<HospitalService>(
       context: context,
-      builder: (_) => ServiceFormDialog(users: _users),
+      builder: (_) => ServiceFormDialog(users: _users, rooms: rooms),
     );
     if (draft == null || !mounted) return;
     try {
@@ -498,13 +506,42 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _editService(HospitalService service) async {
+    List<HospitalRoom> serviceRooms = const [];
+    List<HospitalBed> serviceBeds = const [];
+    try {
+      final resources = HospitalResourceService();
+      final rooms = await resources.rooms();
+      final serviceRoomIds = rooms
+          .where((room) => room.serviceId == service.id)
+          .map((room) => room.id)
+          .toSet();
+      serviceRooms = rooms
+          .where((room) => room.serviceId == service.id)
+          .toList();
+      serviceBeds = (await resources.beds())
+          .where((bed) => serviceRoomIds.contains(bed.roomId))
+          .toList();
+    } on ApiException catch (error) {
+      _showError(error);
+      return;
+    }
     final edited = await showDialog<HospitalService>(
       context: context,
-      builder: (_) => ServiceFormDialog(service: service, users: _users),
+      builder: (_) => ServiceFormDialog(
+        service: service,
+        users: _users,
+        rooms: serviceRooms,
+        beds: serviceBeds,
+        canManageAssignments: _user.role == StaffRole.administrator,
+        canManageStatus: _user.role == StaffRole.administrator,
+      ),
     );
     if (edited == null || !mounted) return;
     try {
-      await ServiceService().update(edited);
+      await ServiceService().update(
+        edited,
+        asServiceHead: _user.role == StaffRole.serviceHead,
+      );
       await _load();
     } on ApiException catch (error) {
       _showError(error);
@@ -514,6 +551,40 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _toggleServiceActive(HospitalService service) async {
     try {
       await ServiceService().toggleActive(service);
+      await _load();
+    } on ApiException catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _deleteService(HospitalService service) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Supprimer ce service ?'),
+        content: Text(
+          'Le service « ${service.name} » sera supprimé définitivement. '
+          'La suppression sera refusée s’il est encore utilisé.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFB3261E),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await ServiceService().delete(service.id);
       await _load();
     } on ApiException catch (error) {
       _showError(error);
@@ -1052,7 +1123,9 @@ class _DashboardPageState extends State<DashboardPage> {
             ServiceTab(
               services: _services,
               canEdit: isAdmin,
+              canEditDetails: _user.role == StaffRole.serviceHead,
               onEdit: _editService,
+              onDelete: _deleteService,
               onToggleActive: _toggleServiceActive,
               onAdd: _addService,
             ),
@@ -1392,13 +1465,15 @@ class HomeTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    HospitalService? userService;
-    for (final service in services) {
-      if (service.id == user.serviceId) {
-        userService = service;
-        break;
-      }
-    }
+    final assignedServices = user.role == StaffRole.serviceHead
+        ? services
+              .where(
+                (service) =>
+                    service.id == user.serviceId ||
+                    service.headUserId == user.id,
+              )
+              .toList()
+        : services.where((service) => service.id == user.serviceId).toList();
 
     return ListView(
       padding: const EdgeInsets.all(20),
@@ -1433,7 +1508,9 @@ class HomeTab extends StatelessWidget {
         InfoCard(
           icon: Icons.medical_services_outlined,
           title: 'Mon service',
-          value: userService?.name ?? 'Aucun service attribué',
+          value: assignedServices.isEmpty
+              ? 'Aucun service attribué'
+              : assignedServices.map((service) => service.name).join(', '),
           color: AppColors.blue,
         ),
         const SizedBox(height: 12),

@@ -235,7 +235,7 @@ active interventions for that time range. Equipment status is `functional`,
 `in_progress`, `completed`, or `cancelled`.
 Room `type` is `single`, `double`, or `intensive_care`; `floor` defaults to
 `"0"`, type to `single`, and capacity to 1 (2 for `double`) when omitted.
-Room numbers are unique per hospital and floor. The API synchronizes the room
+Room numbers are unique per service and floor. The API synchronizes the room
 indexes on startup to migrate databases from the previous hospital-wide rule.
 Room status is `available`, `full`, or `maintenance`; occupancy updates room
 status unless it is in maintenance. Bed status is `free`, `occupied`,

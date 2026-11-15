@@ -195,7 +195,6 @@ class HospitalService {
     'serviceType': serviceType.apiValue,
     'building': building,
     'floor': floor,
-    'capacity': capacity,
     'phone': phone,
     'email': email,
     'headName': headName,
