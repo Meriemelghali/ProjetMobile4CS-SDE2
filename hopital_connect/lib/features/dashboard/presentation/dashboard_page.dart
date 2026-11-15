@@ -17,6 +17,10 @@ import '../../auth/presentation/login_page.dart';
 import '../../hospital/data/hospital_resource_service.dart';
 import '../../hospital/domain/hospital_resources.dart';
 import '../../hospital/presentation/hospital_tab.dart';
+import '../../medical_records/presentation/emergency_card_page.dart';
+import '../../medical_records/presentation/medical_record_home_card.dart';
+import '../../medical_records/presentation/medical_record_page.dart';
+import '../../medical_records/presentation/patient_records_tab.dart';
 import '../../planning/data/shift_service.dart';
 import '../../planning/domain/shift.dart';
 import '../../planning/presentation/planning_tab.dart';
@@ -66,6 +70,15 @@ class _DashboardPageState extends State<DashboardPage> {
   List<AppointmentDoctor> _doctors = const [];
   List<ServiceColleague> _colleagues = const [];
   PatientRecordType _followUpType = PatientRecordType.all;
+  int _followUpRequest = 0;
+
+  /// Raccourcis de l'accueil patient → onglet du dossier médical.
+  static int _recordTabFor(PatientRecordType type) => switch (type) {
+    PatientRecordType.consultations => 1,
+    PatientRecordType.results => 2,
+    PatientRecordType.treatments || PatientRecordType.prescriptions => 3,
+    PatientRecordType.all || PatientRecordType.reports => 0,
+  };
 
   List<StaffUser> get _doctorAccounts => _users
       .where(
@@ -808,22 +821,6 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
-  Future<void> _showEmergencyInfo() => showDialog<void>(
-    context: context,
-    builder: (_) => AlertDialog(
-      title: const Text('Urgences'),
-      content: const Text(
-        'En cas d’urgence, contactez immédiatement les services d’urgence de votre région.',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Fermer'),
-        ),
-      ],
-    ),
-  );
-
   Future<void> _manageUsers() async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
@@ -961,6 +958,17 @@ class _DashboardPageState extends State<DashboardPage> {
     final isPharmacist = _user.role == StaffRole.pharmacist;
     final isAdmin = _user.role == StaffRole.administrator;
     final isDoctor = _user.role == StaffRole.doctor;
+    final isNurse = _user.role == StaffRole.nurse;
+    // Dossier médical : onglet ajouté en dernière position pour ne pas
+    // décaler les index des onglets existants.
+    final medicalRecordsIndex = isDoctor ? 6 : (isNurse ? 5 : -1);
+    final medicalRecordsTab = PatientRecordsTab(
+      viewerRole: _user.role,
+      viewerId: _user.id,
+      viewerName: _user.lastName.isNotEmpty
+          ? _user.lastName
+          : _user.displayName,
+    );
     final doctorServices = isDoctor
         ? _assignedServicesFor(_user)
         : const <HospitalService>[];
@@ -990,6 +998,7 @@ class _DashboardPageState extends State<DashboardPage> {
               onOpenAppointments: () => setState(() => _selectedIndex = 2),
               onOpenFollowUps: (type) => setState(() {
                 _followUpType = type;
+                _followUpRequest++;
                 _selectedIndex = 1;
               }),
               onOpenProfile: () => setState(() => _selectedIndex = 3),
@@ -998,16 +1007,29 @@ class _DashboardPageState extends State<DashboardPage> {
               onCancelAppointment: _confirmCancelAppointment,
               onOpenDirections: _openDirections,
               onContactHospital: _contactHospital,
-              onEmergency: _showEmergencyInfo,
+              onEmergency: () => openMyEmergencyCard(context),
               notifications: _notifications,
               onMarkNotificationsRead: _markNotificationsRead,
               onRespondToProposal: _respondToProposal,
+              medicalRecordCard: MedicalRecordHomeCard(
+                patientId: _user.id,
+                isArabic: _user.language == 'ar',
+                onOpen: () => setState(() {
+                  _followUpType = PatientRecordType.all;
+                  _followUpRequest++;
+                  _selectedIndex = 1;
+                }),
+              ),
             ),
-            PatientFollowUpsTab(
-              appointments: _appointments,
-              initialType: _followUpType,
-              isArabic: _user.language == 'ar',
-              onSelectAppointments: (_) => setState(() => _selectedIndex = 2),
+            // Onglet « Mon dossier » : module dossier médical (remplace
+            // l'ancien écran « Mes suivis » qui n'affichait que des
+            // emplacements vides).
+            MedicalRecordPage(
+              embedded: true,
+              viewerRole: StaffRole.patient,
+              viewerId: _user.id,
+              initialTab: _recordTabFor(_followUpType),
+              tabRequest: _followUpRequest,
             ),
             AppointmentsTab(
               appointments: _appointments,
@@ -1080,6 +1102,7 @@ class _DashboardPageState extends State<DashboardPage> {
               users: _users,
               useMockData: _useMockHospitalData,
             ),
+            medicalRecordsTab,
           ]
         : isSecretary
         ? <Widget>[
@@ -1163,6 +1186,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 currentUserId: _user.id,
                 isAdmin: true,
               ),
+            if (isNurse) medicalRecordsTab,
           ];
     final isArabic = isPatient && _user.language == 'ar';
     final destinations = isPatient
@@ -1174,9 +1198,9 @@ class _DashboardPageState extends State<DashboardPage> {
                     label: 'الرئيسية',
                   ),
                   NavigationDestination(
-                    icon: Icon(Icons.monitor_heart_outlined),
-                    selectedIcon: Icon(Icons.monitor_heart),
-                    label: 'متابعتي',
+                    icon: Icon(Icons.folder_shared_outlined),
+                    selectedIcon: Icon(Icons.folder_shared),
+                    label: 'سجلي الطبي',
                   ),
                   NavigationDestination(
                     icon: Icon(Icons.calendar_month_outlined),
@@ -1196,9 +1220,9 @@ class _DashboardPageState extends State<DashboardPage> {
                     label: 'Accueil',
                   ),
                   NavigationDestination(
-                    icon: Icon(Icons.monitor_heart_outlined),
-                    selectedIcon: Icon(Icons.monitor_heart),
-                    label: 'Mes suivis',
+                    icon: Icon(Icons.folder_shared_outlined),
+                    selectedIcon: Icon(Icons.folder_shared),
+                    label: 'Mon dossier',
                   ),
                   NavigationDestination(
                     icon: Icon(Icons.calendar_month_outlined),
@@ -1286,6 +1310,12 @@ class _DashboardPageState extends State<DashboardPage> {
                 selectedIcon: Icon(Icons.event_available),
                 label: 'Rendez-vous',
               ),
+            if (isDoctor || isNurse)
+              const NavigationDestination(
+                icon: Icon(Icons.folder_shared_outlined),
+                selectedIcon: Icon(Icons.folder_shared),
+                label: 'Dossiers',
+              ),
           ];
 
     final hasMoreDestinations = destinations.length > 5;
@@ -1304,8 +1334,8 @@ class _DashboardPageState extends State<DashboardPage> {
         : _selectedIndex;
     final titles = isPatient
         ? isArabic
-              ? const ['مساحة المريض', 'متابعتي', 'مواعيدي', 'ملفي']
-              : const ['Accueil', 'Mes suivis', 'Mes RDV', 'Profil']
+              ? const ['مساحة المريض', 'سجلي الطبي', 'مواعيدي', 'ملفي']
+              : const ['Accueil', 'Mon dossier médical', 'Mes RDV', 'Profil']
         : isPharmacist
         ? const ['Gestion Pharmacie', 'Profil']
         : isDoctor
@@ -1316,10 +1346,15 @@ class _DashboardPageState extends State<DashboardPage> {
             'Transmissions',
             'Profil',
             'Ressources hospitalières',
+            'Dossiers médicaux',
           ]
         : isSecretary
         ? const ['Espace secrétaire', 'Rendez-vous', 'Ressources hospitalières']
-        : [..._titles, if (isAdmin) 'Rendez-vous'];
+        : [
+            ..._titles.take(5),
+            if (isAdmin) ...['Administration', 'Rendez-vous'],
+            if (isNurse) 'Dossiers médicaux',
+          ];
     final hospitalPageIndex = isPharmacist
         ? -1
         : isSecretary
@@ -1344,6 +1379,15 @@ class _DashboardPageState extends State<DashboardPage> {
           foregroundColor: AppColors.navy,
           backgroundColor: AppColors.background,
           actions: [
+            if (medicalRecordsIndex >= 0 &&
+                _selectedIndex != medicalRecordsIndex &&
+                screenWidth >= 360)
+              IconButton(
+                tooltip: 'Dossiers médicaux',
+                onPressed: () =>
+                    setState(() => _selectedIndex = medicalRecordsIndex),
+                icon: const Icon(Icons.folder_shared_outlined),
+              ),
             if (!isPatient && !isOnHospitalPage && screenWidth >= 360)
               IconButton(
                 tooltip: 'Actualiser',

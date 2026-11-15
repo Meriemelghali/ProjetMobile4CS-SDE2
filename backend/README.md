@@ -202,6 +202,13 @@ All JSON request bodies reject unrecognized fields. MongoDB identifiers are Obje
 | `PUT /equipment/:id` | Admin, service head, operating room manager | Any subset of equipment fields; manager scope enforced | `{ "equipment" }` |
 | `PUT /equipment/:id/maintenance` | Admin, service head, operating room manager | Any subset of `status`, `lastMaintenanceAt`, `maintenanceDueAt` (`null` clears a date; manager scope enforced) | `{ "equipment" }` |
 | `DELETE /equipment/:id` | Admin | — | `{ "equipment" }` |
+| `GET /medical-records/patients` | Doctor, nurse | Optional `q` (name or email search) | `{ "patients": [...] }` (blood type, allergy counts, last consultation) |
+| `GET /medical-records/me` | Patient | — | Full medical file of the signed-in patient |
+| `GET /medical-records/:patientId` | Doctor, nurse, patient (own record only) | — | `{ "patient", "record", "consultations", "vitals", "prescriptions", "appointments" }` |
+| `PUT /medical-records/:patientId` | Doctor | Any subset of `bloodType`, `heightCm`, `allergies`, `chronicConditions`, `history`, `currentTreatments`, `vaccinations` (upsert) | `{ "record" }` |
+| `POST /medical-records/:patientId/consultations` | Doctor | `{ "reason", "date"?, "symptoms"?, "examination"?, "diagnosis"?, "notes"?, "followUpAt"?, "appointmentId"? }` | `{ "consultation" }` (201) |
+| `PUT /medical-records/consultations/:id` | Doctor (author only) | Any subset of consultation fields | `{ "consultation" }` |
+| `POST /medical-records/:patientId/vitals` | Doctor, nurse | At least one of `systolic`+`diastolic`, `heartRate`, `temperature`, `spo2`, `weightKg`, `glucose`; optional `recordedAt`, `notes` | `{ "vital" }` (201) |
 
 Service JSON fields include `name`, `location`, `description`, `active`,
 `serviceType`, `building`, `floor`, `capacity`, `phone`, `email`, `headName`,
@@ -268,6 +275,16 @@ Resource response fields:
 Dates in JSON responses are ISO-serialized. List and create/update/delete
 responses use the wrapper keys shown in the endpoint table; assignment and
 discharge both return `{ "bed": ... }`.
+
+## Medical records demo data
+
+`npm run seed:demo` creates fictional `@demo.test` accounts (admin, doctor,
+nurse, secretary and three patients) with complete medical records,
+consultations and six months of vital signs. The script is idempotent: it
+only resets data belonging to the demo patients. The shared password defaults
+to the value documented in [docs/comptes-de-test.md](../docs/comptes-de-test.md)
+and can be overridden with `DEMO_PASSWORD`. Administrators manage accounts but
+cannot read medical content.
 
 ## Testing
 

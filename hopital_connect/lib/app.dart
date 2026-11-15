@@ -3,12 +3,20 @@ import 'package:flutter/material.dart';
 import 'core/theme/app_colors.dart';
 import 'features/auth/presentation/login_page.dart';
 import 'features/dashboard/presentation/dashboard_page.dart';
+import 'features/splash/splash_page.dart';
 import 'core/session/app_session.dart';
 
 class HopitalConnectApp extends StatelessWidget {
-  const HopitalConnectApp({super.key, this.initialSession});
+  const HopitalConnectApp({
+    super.key,
+    this.initialSession,
+    this.showSplash = false,
+  });
 
   final AppSession? initialSession;
+
+  /// Démarre sur le splash animé, qui restaure lui-même la session.
+  final bool showSplash;
 
   @override
   Widget build(BuildContext context) {
@@ -45,7 +53,9 @@ class HopitalConnectApp extends StatelessWidget {
           ),
         ),
       ),
-      home: initialSession == null
+      home: showSplash
+          ? const SplashPage()
+          : initialSession == null
           ? const LoginPage()
           : DashboardPage(session: initialSession!),
     );
