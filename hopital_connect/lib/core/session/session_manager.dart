@@ -30,6 +30,7 @@ class SessionManager {
         ...user.toProfileJson(),
         'role': user.role.apiValue,
         'roles': user.assignedRoles.map((role) => role.apiValue).toList(),
+        'hospitalId': user.hospitalId,
         'serviceId': user.serviceId,
         'active': user.isActive,
       }),

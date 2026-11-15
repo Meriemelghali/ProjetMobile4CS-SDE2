@@ -1,7 +1,10 @@
 const mongoose = require('mongoose');
 const { HttpError } = require('../errors');
 
-const ROLES = ['admin', 'doctor', 'nurse', 'secretary', 'service_head', 'patient'];
+const ROLES = [
+  'admin', 'doctor', 'nurse', 'secretary', 'service_head',
+  'operating_room_manager', 'patient',
+];
 const APPOINTMENT_STATUSES = [
   'pending', 'accepted', 'in_progress', 'proposed', 'rejected', 'cancelled',
 ];

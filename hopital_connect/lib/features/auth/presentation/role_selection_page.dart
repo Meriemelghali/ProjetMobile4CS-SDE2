@@ -176,6 +176,7 @@ class _RoleSelectionPageState extends State<RoleSelectionPage> {
     StaffRole.nurse => Icons.health_and_safety_outlined,
     StaffRole.secretary => Icons.support_agent_outlined,
     StaffRole.serviceHead => Icons.manage_accounts_outlined,
+    StaffRole.operatingRoomManager => Icons.medical_services_outlined,
     StaffRole.patient => Icons.person_outline,
   };
 
@@ -185,6 +186,7 @@ class _RoleSelectionPageState extends State<RoleSelectionPage> {
     StaffRole.nurse => 'Espace du personnel soignant',
     StaffRole.secretary => 'Espace secrétariat',
     StaffRole.serviceHead => 'Gestion de votre service',
+    StaffRole.operatingRoomManager => 'Gestion du bloc opératoire',
     StaffRole.patient => 'Espace patient',
   };
 }

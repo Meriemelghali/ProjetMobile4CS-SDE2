@@ -80,17 +80,26 @@ class _HospitalDialogState extends State<HospitalDialog> {
   );
 }
 
+class RoomDialogResult {
+  const RoomDialogResult({required this.room, this.firstBedNumber});
+
+  final HospitalRoom room;
+  final int? firstBedNumber;
+}
+
 class RoomDialog extends StatefulWidget {
   const RoomDialog({
     super.key,
     this.room,
     required this.hospitals,
     required this.services,
+    this.lockScope = false,
   });
 
   final HospitalRoom? room;
   final List<Hospital> hospitals;
   final List<HospitalService> services;
+  final bool lockScope;
 
   @override
   State<RoomDialog> createState() => _RoomDialogState();
@@ -101,7 +110,7 @@ class _RoomDialogState extends State<RoomDialog> {
     widget.hospitals.map((item) => item.id),
     widget.room?.hospitalId,
   );
-  late String _serviceId = _existingOrEmpty(
+  late String _serviceId = _existingOrFirstOrEmpty(
     _servicesFor(
       widget.services,
       widget.hospitals,
@@ -111,13 +120,17 @@ class _RoomDialogState extends State<RoomDialog> {
   );
   late RoomType _type = widget.room?.type ?? RoomType.single;
   late RoomStatus _status = widget.room?.status ?? RoomStatus.available;
-  late final _number = TextEditingController(text: widget.room?.number ?? '');
+  late final _number = TextEditingController(
+    text: widget.room?.number.toString() ?? '',
+  );
   late final _floor = TextEditingController(text: widget.room?.floor ?? '');
   late final _capacity = TextEditingController(
-    text: widget.room != null && widget.room!.capacity > 0
+    text:
+        widget.room?.type == RoomType.intensiveCare && widget.room!.capacity > 0
         ? '${widget.room!.capacity}'
-        : '',
+        : '${_defaultCapacity(_type)}',
   );
+  late final _firstBedNumber = TextEditingController(text: '1');
   final _formKey = GlobalKey<FormState>();
 
   @override
@@ -125,22 +138,36 @@ class _RoomDialogState extends State<RoomDialog> {
     _number.dispose();
     _floor.dispose();
     _capacity.dispose();
+    _firstBedNumber.dispose();
     super.dispose();
   }
 
   void _submit() {
     if (!_formKey.currentState!.validate()) return;
+    if (_serviceId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Associez un service à l’hôpital.')),
+      );
+      return;
+    }
     Navigator.pop(
       context,
-      HospitalRoom(
-        id: widget.room?.id ?? '',
-        hospitalId: _hospitalId,
-        serviceId: _serviceId.isEmpty ? null : _serviceId,
-        number: _number.text.trim(),
-        floor: _floor.text.trim(),
-        type: _type,
-        status: _status,
-        capacity: int.tryParse(_capacity.text.trim()) ?? 0,
+      RoomDialogResult(
+        room: HospitalRoom(
+          id: widget.room?.id ?? '',
+          hospitalId: _hospitalId,
+          serviceId: _serviceId.isEmpty ? null : _serviceId,
+          number: int.parse(_number.text.trim()),
+          floor: _floor.text.trim(),
+          type: _type,
+          status: _status,
+          capacity: _type == RoomType.intensiveCare
+              ? int.parse(_capacity.text.trim())
+              : _defaultCapacity(_type),
+        ),
+        firstBedNumber: widget.room == null
+            ? int.parse(_firstBedNumber.text.trim())
+            : null,
       ),
     );
   }
@@ -150,10 +177,12 @@ class _RoomDialogState extends State<RoomDialog> {
       widget.services,
       widget.hospitals,
       id,
-    ).map((item) => item.id);
+    ).map((item) => item.id).toList();
     setState(() {
       _hospitalId = id;
-      if (!serviceIds.contains(_serviceId)) _serviceId = '';
+      if (!serviceIds.contains(_serviceId)) {
+        _serviceId = serviceIds.isEmpty ? '' : serviceIds.first;
+      }
     });
   }
 
@@ -174,8 +203,15 @@ class _RoomDialogState extends State<RoomDialog> {
             )
             .toList(),
         onChanged: (value) => _selectHospital(value!),
+        enabled: !widget.lockScope,
       ),
-      _textField(_number, 'Numéro', required: true),
+      _textField(
+        _number,
+        'Numéro',
+        required: true,
+        keyboardType: TextInputType.number,
+        validator: (value) => _integerRangeValidator(value, 'Numéro'),
+      ),
       _textField(_floor, 'Étage'),
       _dropdown<RoomType>(
         value: _type,
@@ -188,7 +224,13 @@ class _RoomDialogState extends State<RoomDialog> {
             child: Text('Soins intensifs'),
           ),
         ],
-        onChanged: (value) => setState(() => _type = value!),
+        onChanged: (value) {
+          if (value == null) return;
+          setState(() {
+            _type = value;
+            _capacity.text = '${_defaultCapacity(value)}';
+          });
+        },
       ),
       _dropdown<RoomStatus>(
         value: _status,
@@ -213,30 +255,63 @@ class _RoomDialogState extends State<RoomDialog> {
       ).isNotEmpty)
         _dropdown<String>(
           value: _serviceId,
-          label: 'Service (facultatif)',
-          items: [
-            const DropdownMenuItem(value: '', child: Text('Aucun')),
-            ..._servicesFor(widget.services, widget.hospitals, _hospitalId).map(
-              (item) =>
-                  DropdownMenuItem(value: item.id, child: Text(item.name)),
-            ),
-          ],
+          label: 'Service',
+          items: _servicesFor(widget.services, widget.hospitals, _hospitalId)
+              .map(
+                (item) =>
+                    DropdownMenuItem(value: item.id, child: Text(item.name)),
+              )
+              .toList(),
           onChanged: (value) => setState(() => _serviceId = value ?? ''),
+          enabled: !widget.lockScope,
+        ),
+      if (_serviceId.isEmpty)
+        const Padding(
+          padding: EdgeInsets.only(bottom: 12),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text('Associez au moins un service à l’hôpital.'),
+          ),
         ),
       _textField(
         _capacity,
         'Capacité indicative',
         keyboardType: TextInputType.number,
+        enabled: _type == RoomType.intensiveCare,
+        validator: (value) => _integerRangeValidator(value, 'Capacité'),
       ),
+      if (_type != RoomType.intensiveCare)
+        const Padding(
+          padding: EdgeInsets.only(bottom: 12),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text('Fixée automatiquement selon le type de chambre.'),
+          ),
+        ),
+      if (widget.room == null)
+        _textField(
+          _firstBedNumber,
+          'Numéro du premier lit',
+          required: true,
+          keyboardType: TextInputType.number,
+          validator: (value) =>
+              _integerRangeValidator(value, 'Numéro du premier lit'),
+        ),
     ],
   );
 }
 
 class BedDialog extends StatefulWidget {
-  const BedDialog({super.key, this.bed, required this.roomId});
+  const BedDialog({
+    super.key,
+    this.bed,
+    required this.roomId,
+    this.statusOnly = false,
+  });
 
   final HospitalBed? bed;
   final String roomId;
+  final bool statusOnly;
 
   @override
   State<BedDialog> createState() => _BedDialogState();
@@ -244,7 +319,9 @@ class BedDialog extends StatefulWidget {
 
 class _BedDialogState extends State<BedDialog> {
   late BedStatus _status = widget.bed?.status ?? BedStatus.free;
-  late final _number = TextEditingController(text: widget.bed?.number ?? '');
+  late final _number = TextEditingController(
+    text: widget.bed?.number.toString() ?? '',
+  );
   final _formKey = GlobalKey<FormState>();
 
   @override
@@ -260,7 +337,7 @@ class _BedDialogState extends State<BedDialog> {
       HospitalBed(
         id: widget.bed?.id ?? '',
         roomId: widget.roomId,
-        number: _number.text.trim(),
+        number: int.parse(_number.text.trim()),
         status: widget.bed?.patientId == null ? _status : BedStatus.occupied,
         patientId: widget.bed?.patientId,
         assignedAt: widget.bed?.assignedAt,
@@ -275,7 +352,14 @@ class _BedDialogState extends State<BedDialog> {
     formKey: _formKey,
     onSubmit: _submit,
     children: [
-      _textField(_number, 'Numéro du lit', required: true),
+      if (!widget.statusOnly)
+        _textField(
+          _number,
+          'Numéro du lit',
+          required: true,
+          keyboardType: TextInputType.number,
+          validator: (value) => _integerRangeValidator(value, 'Numéro du lit'),
+        ),
       if (widget.bed?.patientId == null)
         _dropdown<BedStatus>(
           value: _status,
@@ -298,13 +382,17 @@ class OperatingRoomDialog extends StatefulWidget {
   const OperatingRoomDialog({
     super.key,
     this.operatingRoom,
+    this.initialNumber = 1,
     required this.hospitals,
     required this.services,
+    this.lockHospital = false,
   });
 
   final OperatingRoom? operatingRoom;
+  final int initialNumber;
   final List<Hospital> hospitals;
   final List<HospitalService> services;
+  final bool lockHospital;
 
   @override
   State<OperatingRoomDialog> createState() => _OperatingRoomDialogState();
@@ -329,7 +417,7 @@ class _OperatingRoomDialogState extends State<OperatingRoomDialog> {
     text: widget.operatingRoom?.name ?? '',
   );
   late final _number = TextEditingController(
-    text: widget.operatingRoom?.number ?? '',
+    text: '${widget.operatingRoom?.number ?? widget.initialNumber}',
   );
   final _formKey = GlobalKey<FormState>();
 
@@ -348,10 +436,9 @@ class _OperatingRoomDialogState extends State<OperatingRoomDialog> {
         id: widget.operatingRoom?.id ?? '',
         hospitalId: _hospitalId,
         name: _name.text.trim(),
-        number: _number.text.trim(),
+        number: int.parse(_number.text.trim()),
         serviceId: _serviceId.isEmpty ? null : _serviceId,
         status: _status,
-        isActive: widget.operatingRoom?.isActive ?? true,
       ),
     );
   }
@@ -387,9 +474,16 @@ class _OperatingRoomDialogState extends State<OperatingRoomDialog> {
             )
             .toList(),
         onChanged: (value) => _selectHospital(value!),
+        enabled: !widget.lockHospital,
       ),
       _textField(_name, 'Nom', required: true),
-      _textField(_number, 'Numéro'),
+      _textField(
+        _number,
+        'Numéro',
+        required: true,
+        keyboardType: TextInputType.number,
+        validator: (value) => _positiveIntegerValidator(value, 'Numéro'),
+      ),
       _dropdown<OperatingRoomStatus>(
         value: _status,
         label: 'État',
@@ -405,6 +499,10 @@ class _OperatingRoomDialogState extends State<OperatingRoomDialog> {
           DropdownMenuItem(
             value: OperatingRoomStatus.sterilization,
             child: Text('En stérilisation'),
+          ),
+          DropdownMenuItem(
+            value: OperatingRoomStatus.maintenance,
+            child: Text('En maintenance'),
           ),
         ],
         onChanged: (value) => setState(() => _status = value!),
@@ -437,12 +535,16 @@ class EquipmentDialog extends StatefulWidget {
     required this.hospitals,
     required this.services,
     required this.operatingRooms,
+    this.lockHospital = false,
+    this.lockTarget = false,
   });
 
   final HospitalEquipment? equipment;
   final List<Hospital> hospitals;
   final List<HospitalService> services;
   final List<OperatingRoom> operatingRooms;
+  final bool lockHospital;
+  final bool lockTarget;
 
   @override
   State<EquipmentDialog> createState() => _EquipmentDialogState();
@@ -609,6 +711,7 @@ class _EquipmentDialogState extends State<EquipmentDialog> {
               )
               .toList(),
           onChanged: (value) => _selectHospital(value!),
+          enabled: !widget.lockHospital,
         ),
         _textField(_name, 'Nom', required: true),
         _textField(_type, 'Type (scanner, respirateur, ECG…)', required: true),
@@ -618,6 +721,7 @@ class _EquipmentDialogState extends State<EquipmentDialog> {
             value: _targetType,
             label: 'Affectation',
             items: targetTypes,
+            enabled: !widget.lockTarget,
             onChanged: (value) => setState(() {
               _targetType = value!;
               final ids = _targetType == 'service'
@@ -636,6 +740,7 @@ class _EquipmentDialogState extends State<EquipmentDialog> {
             label: _targetType == 'service' ? 'Service' : 'Salle d’opération',
             items: targets,
             onChanged: (value) => setState(() => _targetId = value!),
+            enabled: !widget.lockTarget,
           ),
         _dropdown<EquipmentStatus>(
           value: _status,
@@ -880,6 +985,7 @@ class _InterventionDialogState extends State<InterventionDialog> {
       _dateButton(
         label: 'Début',
         value: _start,
+        includeTime: true,
         onPressed: () async {
           final value = await _pickDateTime(_start);
           if (value != null) setState(() => _start = value);
@@ -888,6 +994,7 @@ class _InterventionDialogState extends State<InterventionDialog> {
       _dateButton(
         label: 'Fin',
         value: _end,
+        includeTime: true,
         onPressed: () async {
           final value = await _pickDateTime(_end);
           if (value != null) setState(() => _end = value);
@@ -1011,17 +1118,23 @@ Widget _textField(
   TextEditingController controller,
   String label, {
   bool required = false,
+  bool enabled = true,
   TextInputType? keyboardType,
+  String? Function(String?)? validator,
 }) => Padding(
   padding: const EdgeInsets.only(bottom: 12),
   child: TextFormField(
     controller: controller,
+    enabled: enabled,
     keyboardType: keyboardType,
     decoration: InputDecoration(labelText: label),
-    validator: required
-        ? (value) =>
-              value == null || value.trim().isEmpty ? 'Champ obligatoire' : null
-        : null,
+    validator:
+        validator ??
+        (required
+            ? (value) => value == null || value.trim().isEmpty
+                  ? 'Champ obligatoire'
+                  : null
+            : null),
   ),
 );
 
@@ -1030,13 +1143,14 @@ Widget _dropdown<T>({
   required String label,
   required List<DropdownMenuItem<T>> items,
   required ValueChanged<T?> onChanged,
+  bool enabled = true,
 }) => Padding(
   padding: const EdgeInsets.only(bottom: 12),
   child: DropdownButtonFormField<T>(
     initialValue: value,
     decoration: InputDecoration(labelText: label),
     items: items,
-    onChanged: onChanged,
+    onChanged: enabled ? onChanged : null,
     validator: (selected) => selected == null ? 'Choisissez une valeur' : null,
   ),
 );
@@ -1045,6 +1159,7 @@ Widget _dateButton({
   required String label,
   required DateTime? value,
   required VoidCallback onPressed,
+  bool includeTime = false,
   VoidCallback? onClear,
 }) => Padding(
   padding: const EdgeInsets.only(bottom: 12),
@@ -1057,7 +1172,8 @@ Widget _dateButton({
           label: Text(
             value == null
                 ? label
-                : '$label : ${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}',
+                : '$label : ${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}'
+                      '${includeTime ? ' à ${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}' : ''}',
           ),
         ),
       ),
@@ -1080,6 +1196,36 @@ String _existingOrEmpty(Iterable<String> values, String? preferred) {
   if (preferred != null && values.contains(preferred)) return preferred;
   return '';
 }
+
+String _existingOrFirstOrEmpty(Iterable<String> values, String? preferred) {
+  final candidates = values.toList();
+  if (preferred != null && candidates.contains(preferred)) return preferred;
+  return candidates.isEmpty ? '' : candidates.first;
+}
+
+String? _integerRangeValidator(
+  String? value,
+  String label, {
+  bool optional = false,
+}) {
+  final normalized = value?.trim() ?? '';
+  if (optional && normalized.isEmpty) return null;
+  final number = int.tryParse(normalized);
+  if (number == null || number < 1 || number > 500) {
+    return '$label doit être un entier entre 1 et 500.';
+  }
+  return null;
+}
+
+String? _positiveIntegerValidator(String? value, String label) {
+  final number = int.tryParse(value?.trim() ?? '');
+  if (number == null || number < 1) {
+    return '$label doit être un entier positif.';
+  }
+  return null;
+}
+
+int _defaultCapacity(RoomType type) => type == RoomType.doubleRoom ? 2 : 1;
 
 List<HospitalService> _servicesFor(
   List<HospitalService> services,

@@ -28,12 +28,35 @@ class UserService {
         .toList();
   }
 
+  Future<List<StaffUser>> listAssignablePatients() async {
+    final response = await _api.get('/users/patients');
+    final values = response['users'];
+    if (values is! List) {
+      throw const ApiException('Liste des patients assignables invalide.');
+    }
+    return values
+        .map((item) => StaffUser.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<StaffUser>> listInterventionParticipants() async {
+    final response = await _api.get('/users/intervention-participants');
+    final values = response['users'];
+    if (values is! List) {
+      throw const ApiException('Liste des participants invalide.');
+    }
+    return values
+        .map((item) => StaffUser.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<StaffUser> create({
     required String username,
     required String email,
     required String password,
     required String role,
     List<String> roles = const [],
+    String? hospitalId,
     String? serviceId,
     List<String> serviceIds = const [],
     String specialty = '',
@@ -47,6 +70,7 @@ class UserService {
         'password': password,
         'role': role,
         'roles': roles.isEmpty ? [role] : roles,
+        'hospitalId': ?hospitalId,
         'serviceId': ?serviceId,
         if (serviceIds.isNotEmpty ||
             role == 'secretary' ||

@@ -8,6 +8,7 @@ const {
 } = require('../src/controllers/authController');
 const { HttpError } = require('../src/errors');
 const { authorize } = require('../src/middleware/authorize');
+const { assertRoomScope } = require('../src/middleware/resourceAccess');
 const { serviceResponse } = require('../src/controllers/servicesController');
 const { shiftResponse } = require('../src/controllers/shiftsController');
 const { handoverResponse } = require('../src/controllers/handoversController');
@@ -33,6 +34,10 @@ const {
   parseMaintenanceUpdate,
 } = require('../src/controllers/operatingResourcesController');
 const { getConfig } = require('../src/config');
+const {
+  DEFAULT_HOSPITAL_NAME,
+  ensureDefaultHospital,
+} = require('../src/services/defaultHospital');
 const {
   requireDateOnly,
   requireDate,
@@ -60,6 +65,7 @@ test('validation accepts the API role and date contract', () => {
   assert.equal(requireRole('nurse'), 'nurse');
   assert.equal(requireRole('secretary'), 'secretary');
   assert.equal(requireRole('service_head'), 'service_head');
+  assert.equal(requireRole('operating_room_manager'), 'operating_room_manager');
   assert.equal(requireRole('patient'), 'patient');
   assert.equal(requireAppointmentStatus('in_progress'), 'in_progress');
   assert.equal(requireAppointmentStatus('rejected'), 'rejected');
@@ -113,6 +119,48 @@ test('appointment schema supports optional motives and secretary decisions', () 
   ]);
 });
 
+test('room number uniqueness is scoped to a service', () => {
+  const uniqueIndex = Room.schema
+    .indexes()
+    .find(([, options]) => options.unique === true);
+
+  assert.deepEqual(uniqueIndex?.[0], {
+    serviceId: 1,
+    number: 1,
+  });
+});
+
+test('service managers cannot access rooms outside their assigned hospital or service', () => {
+  const user = {
+    role: 'service_head',
+    serviceId: 'cardiology',
+    hospitalId: 'hospital-one',
+  };
+  assert.doesNotThrow(() => assertRoomScope(user, {
+    serviceId: 'cardiology',
+    hospitalId: 'hospital-one',
+  }));
+  assert.throws(() => assertRoomScope(user, {
+    serviceId: 'general-surgery',
+    hospitalId: 'hospital-one',
+  }), (error) => error instanceof HttpError && error.status === 403);
+  assert.throws(() => assertRoomScope(user, {
+    serviceId: 'cardiology',
+    hospitalId: 'hospital-two',
+  }), (error) => error instanceof HttpError && error.status === 403);
+});
+
+test('operating room numbers are unique within a hospital', () => {
+  const uniqueIndex = OperatingRoom.schema
+    .indexes()
+    .find(([, options]) => options.unique === true);
+
+  assert.deepEqual(uniqueIndex?.[0], {
+    hospitalId: 1,
+    number: 1,
+  });
+});
+
 test('user response only includes Flutter contract fields', () => {
   const user = userResponse({
     _id: '507f1f77bcf86cd799439011',
@@ -128,12 +176,13 @@ test('user response only includes Flutter contract fields', () => {
   assert.deepEqual(Object.keys(user), [
     '_id', 'username', 'email', 'firstName', 'lastName', 'birthDate', 'phone',
     'address', 'emergencyContact', 'insurance', 'language',
-    'notificationPreferences', 'role', 'roles', 'serviceId', 'serviceIds',
+    'notificationPreferences', 'role', 'roles', 'serviceId', 'hospitalId', 'serviceIds',
     'specialty', 'photoUrl', 'active',
   ]);
   assert.deepEqual(user.roles, ['doctor', 'service_head']);
   assert.equal(user.username, 'Ada');
   assert.deepEqual(user.serviceIds, []);
+  assert.equal(user.hospitalId, null);
 });
 
 test('secretary responses include all assigned service identifiers', () => {
@@ -204,6 +253,38 @@ test('resource serializers expose the documented Flutter fields', () => {
     createdAt: new Date('2026-03-01T06:00:00Z'),
     readBy: ['reader-id'],
   }, 'reader-id').isRead, true);
+});
+
+test('default hospital bootstrap is idempotent and links existing services', async () => {
+  let existingHospital = null;
+  let createdHospital;
+  const hospitalModel = {
+    findOne: async () => existingHospital,
+    create: async (document) => {
+      createdHospital = document;
+      existingHospital = document;
+      return document;
+    },
+  };
+  const serviceModel = {
+    distinct: async (field) => {
+      assert.equal(field, '_id');
+      return ['service-one', 'service-two'];
+    },
+  };
+
+  assert.equal(
+    await ensureDefaultHospital({ hospitalModel, serviceModel }),
+    true,
+  );
+  assert.deepEqual(createdHospital, {
+    name: DEFAULT_HOSPITAL_NAME,
+    serviceIds: ['service-one', 'service-two'],
+  });
+  assert.equal(
+    await ensureDefaultHospital({ hospitalModel, serviceModel }),
+    false,
+  );
 });
 
 test('service features default to false and null never serializes as enabled', () => {
@@ -381,7 +462,9 @@ test('resource schemas enforce the requested room, bed, OR, equipment, and inter
   assert.deepEqual(Room.schema.path('type').enumValues, ['single', 'double', 'intensive_care']);
   assert.deepEqual(Room.schema.path('status').enumValues, ['available', 'full', 'maintenance']);
   assert.deepEqual(Bed.schema.path('status').enumValues, ['free', 'occupied', 'reserved', 'cleaning']);
-  assert.deepEqual(OperatingRoom.schema.path('status').enumValues, ['free', 'in_progress', 'sterilization']);
+  assert.deepEqual(OperatingRoom.schema.path('status').enumValues, [
+    'free', 'in_progress', 'sterilization', 'maintenance',
+  ]);
   assert.deepEqual(Equipment.schema.path('status').enumValues, ['functional', 'broken', 'maintenance']);
   assert.ok(Intervention.schema.path('equipmentIds'));
 });
@@ -455,6 +538,18 @@ test('user schema accepts the service head role', async () => {
     role: 'service_head',
   });
   await user.validate();
+});
+
+test('user schema accepts the operating room manager role and hospital scope', async () => {
+  const user = new User({
+    username: 'Block Manager',
+    email: 'block-manager@example.test',
+    passwordHash: 'synthetic-hash',
+    role: 'operating_room_manager',
+    hospitalId: '507f1f77bcf86cd799439011',
+  });
+  await user.validate();
+  assert.equal(String(user.hospitalId), '507f1f77bcf86cd799439011');
 });
 
 test('user schema stores multiple assigned roles', async () => {

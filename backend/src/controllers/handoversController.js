@@ -24,15 +24,17 @@ function handoverResponse(handover, userId) {
 }
 
 async function serviceIdsForUser(user) {
-  if (user.role === 'service_head') {
-    const services = await Service.find({ headUserId: user._id }).select('_id');
-    return services.map((service) => service._id.toString());
-  }
-  const serviceIds = [
+  const assignedServiceIds = [
     ...(user.serviceIds || []).map((id) => id.toString()),
     ...(user.serviceId ? [user.serviceId.toString()] : []),
   ];
-  return [...new Set(serviceIds)];
+  if (user.role === 'service_head') {
+    const services = await Service.find({ headUserId: user._id }).select('_id');
+    assignedServiceIds.push(
+      ...services.map((service) => service._id.toString()),
+    );
+  }
+  return [...new Set(assignedServiceIds)];
 }
 
 async function list(req, res) {

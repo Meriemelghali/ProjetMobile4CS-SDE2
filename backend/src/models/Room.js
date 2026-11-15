@@ -11,6 +11,7 @@ const roomSchema = new mongoose.Schema({
   capacity: { type: Number, required: true, min: 1, max: 500, validate: Number.isInteger, default: 1 },
 }, { timestamps: true });
 
-roomSchema.index({ hospitalId: 1, number: 1 }, { unique: true });
+// A room number may be reused on another floor of the same service.
+roomSchema.index({ serviceId: 1, floor: 1, number: 1 }, { unique: true });
 
 module.exports = mongoose.models.Room || mongoose.model('Room', roomSchema);

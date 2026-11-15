@@ -17,12 +17,14 @@ enum BedStatus { free, occupied, reserved, cleaning }
 enum OperatingRoomStatus {
   free,
   inProgress,
-  sterilization;
+  sterilization,
+  maintenance;
 
   String get apiValue => switch (this) {
     OperatingRoomStatus.free => 'free',
     OperatingRoomStatus.inProgress => 'in_progress',
     OperatingRoomStatus.sterilization => 'sterilization',
+    OperatingRoomStatus.maintenance => 'maintenance',
   };
 }
 
@@ -58,6 +60,7 @@ extension OperatingRoomStatusLabel on OperatingRoomStatus {
     OperatingRoomStatus.free => 'Libre',
     OperatingRoomStatus.inProgress => 'En cours',
     OperatingRoomStatus.sterilization => 'En stérilisation',
+    OperatingRoomStatus.maintenance => 'En maintenance',
   };
 }
 
@@ -118,12 +121,18 @@ class HospitalRoom {
 
   final String id;
   final String hospitalId;
-  final String number;
+  final int number;
   final String floor;
   final RoomType type;
   final RoomStatus status;
   final String? serviceId;
   final int capacity;
+
+  int get bedCapacity => capacity > 0
+      ? capacity
+      : type == RoomType.doubleRoom
+      ? 2
+      : 1;
 
   factory HospitalRoom.fromJson(Map<String, dynamic> json) => HospitalRoom(
     id: _resourceId(json['_id'] ?? json['id']),
@@ -131,7 +140,7 @@ class HospitalRoom {
     serviceId: json['serviceId'] == null
         ? null
         : _resourceId(json['serviceId']),
-    number: (json['number'] ?? json['name'])?.toString() ?? '',
+    number: _resourceInteger(json['number'] ?? json['name'], 'number'),
     floor: json['floor']?.toString() ?? '',
     type: _roomType(json['type']),
     status: _enumByName(
@@ -165,7 +174,7 @@ class HospitalBed {
 
   final String id;
   final String roomId;
-  final String number;
+  final int number;
   final BedStatus status;
   final String? patientId;
   final DateTime? assignedAt;
@@ -175,7 +184,7 @@ class HospitalBed {
     return HospitalBed(
       id: _resourceId(json['_id'] ?? json['id']),
       roomId: _resourceId(json['roomId']),
-      number: (json['bedNumber'] ?? json['number'])?.toString() ?? '',
+      number: _resourceInteger(json['number'] ?? json['bedNumber'], 'number'),
       status: _enumByName(BedStatus.values, json['status'], BedStatus.free),
       patientId: patient == null ? null : _resourceId(patient),
       assignedAt: _optionalDate(json['assignedAt']),
@@ -195,38 +204,34 @@ class OperatingRoom {
     required this.hospitalId,
     required this.name,
     required this.status,
-    this.number = '',
+    this.number = 1,
     this.serviceId,
-    this.isActive = true,
   });
 
   final String id;
   final String hospitalId;
   final String name;
   final OperatingRoomStatus status;
-  final String number;
+  final int number;
   final String? serviceId;
-  final bool isActive;
 
   factory OperatingRoom.fromJson(Map<String, dynamic> json) => OperatingRoom(
     id: _resourceId(json['_id'] ?? json['id']),
     hospitalId: _resourceId(json['hospitalId']),
     name: json['name'] as String? ?? '',
-    number: json['number']?.toString() ?? '',
+    number: _resourceInteger(json['number'] ?? 1, 'number'),
     status: _operatingRoomStatus(json['status']),
     serviceId: json['serviceId'] == null
         ? null
         : _resourceId(json['serviceId']),
-    isActive: json['active'] as bool? ?? true,
   );
 
   Map<String, Object?> toJson() => {
     'hospitalId': hospitalId,
     'name': name,
-    if (number.isNotEmpty) 'number': number,
+    'number': number,
     'status': status.apiValue,
     if (serviceId != null) 'serviceId': serviceId,
-    'active': isActive,
   };
 }
 
@@ -303,6 +308,7 @@ class HospitalIntervention {
     required this.end,
     required this.equipmentIds,
     this.serviceId,
+    this.surgeonName = '',
     this.status = 'planned',
   });
 
@@ -315,6 +321,7 @@ class HospitalIntervention {
   final DateTime end;
   final List<String> equipmentIds;
   final String? serviceId;
+  final String surgeonName;
   final String status;
 
   factory HospitalIntervention.fromJson(Map<String, dynamic> json) =>
@@ -330,7 +337,10 @@ class HospitalIntervention {
         serviceId: json['serviceId'] == null
             ? null
             : _resourceId(json['serviceId']),
-        status: json['status'] as String? ?? 'planned',
+        surgeonName: json['surgeonName'] as String? ?? '',
+        status: json['status'] == 'scheduled'
+            ? 'planned'
+            : json['status'] as String? ?? 'planned',
       );
 
   Map<String, Object?> toJson() => {
@@ -338,10 +348,12 @@ class HospitalIntervention {
     'patientId': patientId,
     'operatingRoomId': operatingRoomId,
     'title': title,
-    'start': start.toIso8601String(),
-    'end': end.toIso8601String(),
+    // The API requires an ISO 8601 date-time that contains a timezone.
+    'start': start.toUtc().toIso8601String(),
+    'end': end.toUtc().toIso8601String(),
     'equipmentIds': equipmentIds,
-    'status': status,
+    // The UI calls this state "planned"; the API calls it "scheduled".
+    'status': status == 'planned' ? 'scheduled' : status,
   };
 }
 
@@ -380,6 +392,7 @@ OperatingRoomStatus _operatingRoomStatus(Object? value) {
   return switch (normalized) {
     'in_progress' || 'inProgress' => OperatingRoomStatus.inProgress,
     'sterilization' => OperatingRoomStatus.sterilization,
+    'maintenance' => OperatingRoomStatus.maintenance,
     _ => OperatingRoomStatus.free,
   };
 }
@@ -389,6 +402,16 @@ String _resourceId(Object? value) {
     return _resourceId(value['_id'] ?? value['id']);
   }
   return value?.toString() ?? '';
+}
+
+int _resourceInteger(Object? value, String field) {
+  if (value is int) return value;
+  if (value is num && value == value.toInt()) return value.toInt();
+  if (value is String) {
+    final parsed = int.tryParse(value);
+    if (parsed != null) return parsed;
+  }
+  throw FormatException('Champ "$field" invalide : un entier est attendu.');
 }
 
 List<String> _idList(Object? value) {

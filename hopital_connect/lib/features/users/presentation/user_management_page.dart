@@ -4,6 +4,8 @@ import '../../../core/network/api_client.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../services/data/service_service.dart';
 import '../../services/domain/hospital_service.dart';
+import '../../hospital/data/hospital_resource_service.dart';
+import '../../hospital/domain/hospital_resources.dart';
 import '../data/user_service.dart';
 import '../domain/staff_role.dart';
 import '../domain/staff_user.dart';
@@ -20,8 +22,19 @@ class UserManagementPage extends StatefulWidget {
 class _UserManagementPageState extends State<UserManagementPage> {
   List<StaffUser> _users = const [];
   List<HospitalService> _services = const [];
+  List<Hospital> _hospitals = const [];
   bool _isLoading = true;
   String? _error;
+
+  List<String> get _existingSpecialties {
+    final specialties = _users
+        .map((user) => user.specialty.trim())
+        .where((specialty) => specialty.isNotEmpty)
+        .toSet()
+        .toList();
+    specialties.sort();
+    return specialties;
+  }
 
   @override
   void initState() {
@@ -38,11 +51,13 @@ class _UserManagementPageState extends State<UserManagementPage> {
       final results = await Future.wait([
         widget.service.list(),
         ServiceService().list(),
+        HospitalResourceService().hospitals(),
       ]);
       if (mounted) {
         setState(() {
           _users = results[0] as List<StaffUser>;
           _services = results[1] as List<HospitalService>;
+          _hospitals = results[2] as List<Hospital>;
         });
       }
     } on ApiException catch (error) {
@@ -55,7 +70,11 @@ class _UserManagementPageState extends State<UserManagementPage> {
   Future<void> _createUser() async {
     final input = await showDialog<_NewUserInput>(
       context: context,
-      builder: (_) => _UserDialog(services: _services),
+      builder: (_) => _UserDialog(
+        services: _services,
+        hospitals: _hospitals,
+        specialties: _existingSpecialties,
+      ),
     );
     if (input == null || !mounted) return;
     try {
@@ -65,6 +84,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
         password: input.password!,
         role: input.role.apiValue,
         roles: input.roles.map((role) => role.apiValue).toList(),
+        hospitalId: input.hospitalId,
         serviceId: input.serviceId,
         serviceIds: input.serviceIds,
         specialty: input.specialty,
@@ -79,7 +99,12 @@ class _UserManagementPageState extends State<UserManagementPage> {
   Future<void> _editUser(StaffUser user) async {
     final edited = await showDialog<StaffUser>(
       context: context,
-      builder: (_) => _UserDialog(user: user, services: _services),
+      builder: (_) => _UserDialog(
+        user: user,
+        services: _services,
+        hospitals: _hospitals,
+        specialties: _existingSpecialties,
+      ),
     );
     if (edited == null || !mounted) return;
     try {
@@ -104,6 +129,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
       email: user.email,
       role: user.role,
       roles: user.assignedRoles,
+      hospitalId: user.hospitalId,
       serviceId: user.serviceId,
       serviceIds: user.serviceIds,
       specialty: user.specialty,
@@ -231,6 +257,7 @@ class _NewUserInput {
     required this.email,
     required this.role,
     required this.roles,
+    this.hospitalId,
     required this.serviceIds,
     required this.specialty,
     required this.photoUrl,
@@ -242,6 +269,7 @@ class _NewUserInput {
   final String email;
   final StaffRole role;
   final List<StaffRole> roles;
+  final String? hospitalId;
   final String? serviceId;
   final List<String> serviceIds;
   final String specialty;
@@ -250,9 +278,16 @@ class _NewUserInput {
 }
 
 class _UserDialog extends StatefulWidget {
-  const _UserDialog({required this.services, this.user});
+  const _UserDialog({
+    required this.services,
+    required this.hospitals,
+    required this.specialties,
+    this.user,
+  });
 
   final List<HospitalService> services;
+  final List<Hospital> hospitals;
+  final List<String> specialties;
   final StaffUser? user;
 
   @override
@@ -268,16 +303,32 @@ class _UserDialogState extends State<_UserDialog> {
     text: widget.user?.email ?? '',
   );
   final _passwordController = TextEditingController();
-  late final _specialtyController = TextEditingController(
-    text: widget.user?.specialty ?? '',
-  );
+  late String? _selectedSpecialty =
+      widget.user?.specialty.trim().isNotEmpty == true
+      ? widget.user!.specialty.trim()
+      : null;
   late final _photoUrlController = TextEditingController(
     text: widget.user?.photoUrl ?? '',
   );
   late Set<StaffRole> _roles = Set.of(
     widget.user?.assignedRoles ?? [StaffRole.nurse],
   );
+  late String? _hospitalId = widget.user?.hospitalId;
+  late String? _managerServiceId =
+      widget.user?.serviceId ??
+      (widget.user?.serviceIds.isNotEmpty == true
+          ? widget.user!.serviceIds.first
+          : null);
   String? _assignmentError;
+
+  List<String> get _specialtyOptions {
+    final specialties = {...widget.specialties};
+    final current = widget.user?.specialty.trim() ?? '';
+    if (current.isNotEmpty) specialties.add(current);
+    final values = specialties.toList()..sort();
+    return values;
+  }
+
   late final Set<String> _assignedServiceIds = {
     if (widget.user != null) ...widget.user!.serviceIds,
     if (widget.user != null &&
@@ -288,13 +339,20 @@ class _UserDialogState extends State<_UserDialog> {
 
   StaffRole get _primaryRole =>
       _roles.contains(widget.user?.role) ? widget.user!.role : _roles.first;
+  List<HospitalService> get _hospitalServices {
+    final hospital = widget.hospitals.where((item) => item.id == _hospitalId);
+    if (hospital.isEmpty) return const [];
+    final ids = hospital.first.serviceIds.toSet();
+    return widget.services
+        .where((service) => ids.contains(service.id))
+        .toList();
+  }
 
   @override
   void dispose() {
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
-    _specialtyController.dispose();
     _photoUrlController.dispose();
     super.dispose();
   }
@@ -308,15 +366,35 @@ class _UserDialogState extends State<_UserDialog> {
       );
       return;
     }
+    if (_roles.contains(StaffRole.serviceHead) &&
+        (_hospitalId == null ||
+            _managerServiceId == null ||
+            !_hospitalServices.any(
+              (service) => service.id == _managerServiceId,
+            ))) {
+      setState(
+        () => _assignmentError = 'Choisissez un hôpital et un service pour le responsable de service.',
+      );
+      return;
+    }
+    if (_roles.contains(StaffRole.operatingRoomManager) &&
+        _hospitalId == null) {
+      setState(
+        () => _assignmentError =
+            'Choisissez un hôpital pour le responsable de bloc.',
+      );
+      return;
+    }
     final serviceIds =
         _roles.contains(StaffRole.doctor) ||
             _roles.contains(StaffRole.secretary)
         ? _assignedServiceIds.toList()
         : const <String>[];
-    final serviceId =
-        (_roles.contains(StaffRole.doctor) ||
-                _roles.contains(StaffRole.secretary)) &&
-            serviceIds.isNotEmpty
+    final serviceId = _roles.contains(StaffRole.serviceHead)
+        ? _managerServiceId
+        : (_roles.contains(StaffRole.doctor) ||
+                  _roles.contains(StaffRole.secretary)) &&
+              serviceIds.isNotEmpty
         ? serviceIds.first
         : null;
     if (widget.user case final user?) {
@@ -327,9 +405,10 @@ class _UserDialogState extends State<_UserDialog> {
           email: _emailController.text.trim(),
           role: _primaryRole,
           roles: _roles.toList(),
+          hospitalId: _hospitalId,
           serviceId: serviceId,
           serviceIds: serviceIds,
-          specialty: _specialtyController.text.trim(),
+          specialty: _selectedSpecialty ?? '',
           photoUrl: _photoUrlController.text.trim(),
           isActive: user.isActive,
         ),
@@ -341,9 +420,10 @@ class _UserDialogState extends State<_UserDialog> {
           email: _emailController.text.trim(),
           role: _primaryRole,
           roles: _roles.toList(),
+          hospitalId: _hospitalId,
           serviceId: serviceId,
           serviceIds: serviceIds,
-          specialty: _specialtyController.text.trim(),
+          specialty: _selectedSpecialty ?? '',
           photoUrl: _photoUrlController.text.trim(),
           password: _passwordController.text,
         ),
@@ -436,12 +516,27 @@ class _UserDialogState extends State<_UserDialog> {
                 ),
                 if (_roles.contains(StaffRole.doctor)) ...[
                   const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _specialtyController,
-                    maxLength: 120,
+                  DropdownButtonFormField<String>(
+                    value: _specialtyOptions.contains(_selectedSpecialty)
+                        ? _selectedSpecialty
+                        : null,
                     decoration: const InputDecoration(
                       labelText: 'Spécialité du médecin',
                     ),
+                    items: _specialtyOptions
+                        .map(
+                          (specialty) => DropdownMenuItem<String>(
+                            value: specialty,
+                            child: Text(specialty),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: _specialtyOptions.isEmpty
+                        ? null
+                        : (value) => setState(() => _selectedSpecialty = value),
+                    validator: (value) => value == null || value.isEmpty
+                        ? 'Choisissez une spécialité existante.'
+                        : null,
                   ),
                   TextFormField(
                     controller: _photoUrlController,
@@ -486,17 +581,75 @@ class _UserDialogState extends State<_UserDialog> {
                           ),
                       ],
                     ),
-                  if (_assignmentError != null)
-                    Align(
-                      alignment: AlignmentDirectional.centerStart,
-                      child: Text(
-                        _assignmentError!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
+                ],
+                if (_roles.contains(StaffRole.serviceHead) ||
+                    _roles.contains(StaffRole.operatingRoomManager)) ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue:
+                        widget.hospitals.any(
+                          (hospital) => hospital.id == _hospitalId,
+                        )
+                        ? _hospitalId
+                        : null,
+                    decoration: const InputDecoration(labelText: 'Hôpital'),
+                    items: widget.hospitals
+                        .map(
+                          (hospital) => DropdownMenuItem(
+                            value: hospital.id,
+                            child: Text(hospital.name),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => setState(() {
+                      _hospitalId = value;
+                      if (!_hospitalServices.any(
+                        (service) => service.id == _managerServiceId,
+                      )) {
+                        _managerServiceId = null;
+                      }
+                      _assignmentError = null;
+                    }),
+                    validator: (value) =>
+                        value == null ? 'Choisissez un hôpital.' : null,
+                  ),
+                  if (_roles.contains(StaffRole.serviceHead)) ...[
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue:
+                          _hospitalServices.any(
+                            (service) => service.id == _managerServiceId,
+                          )
+                          ? _managerServiceId
+                          : null,
+                      decoration: const InputDecoration(labelText: 'Service'),
+                      items: _hospitalServices
+                          .map(
+                            (service) => DropdownMenuItem(
+                              value: service.id,
+                              child: Text(service.name),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) => setState(() {
+                        _managerServiceId = value;
+                        _assignmentError = null;
+                      }),
+                      validator: (value) =>
+                          value == null ? 'Choisissez un service.' : null,
+                    ),
+                  ],
+                ],
+                if (_assignmentError != null)
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      _assignmentError!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
                       ),
                     ),
-                ],
+                  ),
               ],
             ),
           ),

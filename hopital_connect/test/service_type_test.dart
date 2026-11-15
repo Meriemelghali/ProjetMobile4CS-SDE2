@@ -170,6 +170,10 @@ void main() {
 
     expect(service.toJson()['headUserId'], 'user-123');
     expect(StaffRole.fromApiValue('service_head'), StaffRole.serviceHead);
+    expect(
+      StaffRole.fromApiValue('operating_room_manager'),
+      StaffRole.operatingRoomManager,
+    );
     expect(StaffRole.fromApiValue('secretary'), StaffRole.secretary);
     expect(
       StaffUser.fromJson({
@@ -189,6 +193,8 @@ void main() {
       'email': 'meriem@example.test',
       'role': 'admin',
       'roles': ['admin', 'service_head', 'patient'],
+      'hospitalId': 'hospital-1',
+      'serviceId': 'service-1',
     });
 
     expect(user.assignedRoles, [
@@ -196,6 +202,8 @@ void main() {
       StaffRole.serviceHead,
       StaffRole.patient,
     ]);
+    expect(user.hospitalId, 'hospital-1');
+    expect(user.serviceId, 'service-1');
   });
 
   testWidgets('multiple assigned roles are offered after login', (
@@ -216,7 +224,7 @@ void main() {
     );
 
     expect(find.text('Administrateur'), findsOneWidget);
-    expect(find.text('Chef de service'), findsOneWidget);
+    expect(find.text('Responsable de service'), findsOneWidget);
     expect(find.text('Continuer'), findsOneWidget);
   });
 
