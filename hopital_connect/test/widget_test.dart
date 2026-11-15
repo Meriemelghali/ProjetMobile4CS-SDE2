@@ -41,6 +41,12 @@ void main() {
     expect(find.text('Mot de passe'), findsOneWidget);
     expect(find.text('Rôle de démonstration'), findsNothing);
     expect(find.text('Créer un compte'), findsOneWidget);
+
+    await tester.tap(find.text('Créer un compte'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Créer un compte'), findsOneWidget);
+    expect(find.text('Inscription'), findsOneWidget);
   });
 
   testWidgets('patient home exposes only the patient account', (tester) async {
