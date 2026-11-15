@@ -64,11 +64,13 @@ class _DashboardPageState extends State<DashboardPage> {
     try {
       final user = await AuthService().currentUser();
       if (user.role == StaffRole.patient) {
+        // Le patient charge aussi les services (lecture seule)
+        final services = await ServiceService().list();
         if (!mounted) return;
         setState(() {
           _user = user;
           _users = const [];
-          _services = const [];
+          _services = services; // Services chargés pour le patient
           _shifts = const [];
           _handovers = const [];
         });
@@ -272,7 +274,15 @@ class _DashboardPageState extends State<DashboardPage> {
         _shifts.where((shift) => shift.end.isAfter(DateTime.now())).toList()
           ..sort((left, right) => left.start.compareTo(right.start));
     final pages = isPatient
-        ? <Widget>[PatientHomeTab(user: _user), PatientProfileTab(user: _user)]
+        ? <Widget>[
+            PatientHomeTab(user: _user),
+            // Onglet Services en lecture seule pour le patient
+            ServiceTab(
+              services: _services,
+              canEdit: false, // Patient = lecture seule, pas de boutons admin
+            ),
+            PatientProfileTab(user: _user),
+          ]
         : <Widget>[
             HomeTab(
               user: _user,
@@ -309,6 +319,12 @@ class _DashboardPageState extends State<DashboardPage> {
               icon: Icon(Icons.home_outlined),
               selectedIcon: Icon(Icons.home),
               label: 'Accueil',
+            ),
+            // Onglet Services visible par le patient (lecture seule)
+            NavigationDestination(
+              icon: Icon(Icons.local_hospital_outlined),
+              selectedIcon: Icon(Icons.local_hospital_rounded),
+              label: 'Services',
             ),
             NavigationDestination(
               icon: Icon(Icons.person_outline),
@@ -349,7 +365,11 @@ class _DashboardPageState extends State<DashboardPage> {
       appBar: AppBar(
         title: Text(
           isPatient
-              ? (_selectedIndex == 0 ? 'Espace patient' : 'Mon profil')
+              ? (_selectedIndex == 0
+                  ? 'Espace patient'
+                  : _selectedIndex == 1
+                      ? 'Services'
+                      : 'Mon profil')
               : _titles[_selectedIndex],
         ),
         foregroundColor: AppColors.navy,
