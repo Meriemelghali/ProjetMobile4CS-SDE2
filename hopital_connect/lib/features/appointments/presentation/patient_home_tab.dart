@@ -24,7 +24,11 @@ class PatientHomeTab extends StatelessWidget {
     this.notifications = const [],
     this.onMarkNotificationsRead,
     this.onRespondToProposal,
+    this.medicalRecordCard,
   });
+
+  /// Carte « Mon dossier médical » (module dossier médical), optionnelle.
+  final Widget? medicalRecordCard;
 
   final StaffUser user;
   final List<Appointment> appointments;
@@ -245,13 +249,13 @@ class PatientHomeTab extends StatelessWidget {
               onTap: () => onOpenFollowUps(PatientRecordType.prescriptions),
             ),
             _QuickAction(
-              icon: Icons.science_outlined,
-              label: _text('Mes résultats', 'نتائجي'),
+              icon: Icons.monitor_heart_outlined,
+              label: _text('Mes constantes', 'مؤشراتي الحيوية'),
               onTap: () => onOpenFollowUps(PatientRecordType.results),
             ),
             _QuickAction(
-              icon: Icons.folder_open_outlined,
-              label: _text('Mes documents', 'مستنداتي'),
+              icon: Icons.folder_shared_outlined,
+              label: _text('Mon dossier', 'سجلي الطبي'),
               onTap: () => onOpenFollowUps(PatientRecordType.all),
             ),
             _QuickAction(
@@ -269,33 +273,39 @@ class PatientHomeTab extends StatelessWidget {
         ),
         const SizedBox(height: 20),
         _HomeSectionTitle(
-          title: _text('Mes suivis', 'متابعتي الصحية'),
+          title: _text('Mon suivi médical', 'متابعتي الصحية'),
           action: TextButton(
             onPressed: () => onOpenFollowUps(PatientRecordType.all),
             child: Text(_text('Tout voir', 'عرض الكل')),
           ),
         ),
         const SizedBox(height: 8),
-        _OverviewCard(
-          icon: Icons.medication_outlined,
-          title: _text('Traitement en cours', 'العلاج الحالي'),
-          value: _text(
-            'Aucun traitement communiqué.',
-            'لا توجد معلومات عن العلاج حالياً.',
+        // Le module dossier médical fournit une carte avec les vraies
+        // données ; les cartes statiques ne restent qu'en secours.
+        if (medicalRecordCard != null)
+          medicalRecordCard!
+        else ...[
+          _OverviewCard(
+            icon: Icons.medication_outlined,
+            title: _text('Traitement en cours', 'العلاج الحالي'),
+            value: _text(
+              'Aucun traitement communiqué.',
+              'لا توجد معلومات عن العلاج حالياً.',
+            ),
           ),
-        ),
-        _OverviewCard(
-          icon: Icons.science_outlined,
-          title: _text('Dernier résultat', 'آخر نتيجة تحليل'),
-          value: _text('Aucun résultat disponible.', 'لا توجد نتائج متاحة.'),
-        ),
-        _OverviewCard(
-          icon: Icons.history,
-          title: _text('Dernière consultation', 'آخر استشارة'),
-          value: pastAppointments.isEmpty
-              ? _text('Aucune consultation passée.', 'لا توجد استشارة سابقة.')
-              : '${pastAppointments.first.doctorName} · ${_formatDate(pastAppointments.first.startAt, _isArabic)}',
-        ),
+          _OverviewCard(
+            icon: Icons.science_outlined,
+            title: _text('Dernier résultat', 'آخر نتيجة تحليل'),
+            value: _text('Aucun résultat disponible.', 'لا توجد نتائج متاحة.'),
+          ),
+          _OverviewCard(
+            icon: Icons.history,
+            title: _text('Dernière consultation', 'آخر استشارة'),
+            value: pastAppointments.isEmpty
+                ? _text('Aucune consultation passée.', 'لا توجد استشارة سابقة.')
+                : '${pastAppointments.first.doctorName} · ${_formatDate(pastAppointments.first.startAt, _isArabic)}',
+          ),
+        ],
         const SizedBox(height: 16),
         _HomeSectionTitle(
           title: _text('Rappels et alertes', 'التذكيرات والتنبيهات'),
