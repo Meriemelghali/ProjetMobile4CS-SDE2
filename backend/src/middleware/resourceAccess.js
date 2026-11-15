@@ -8,6 +8,18 @@ function hospitalIdFor(user) {
   return user.hospitalId ? user.hospitalId.toString() : null;
 }
 
+function pharmacyIdFor(user) {
+  return user.pharmacyId ? user.pharmacyId.toString() : null;
+}
+
+function assertPharmacyScope(user, pharmacyId) {
+  if (user.role === 'admin') return;
+  const assignedPharmacyId = pharmacyIdFor(user);
+  if (user.role !== 'pharmacist' || !assignedPharmacyId || String(pharmacyId) !== assignedPharmacyId) {
+    throw new HttpError(403, 'Resource is outside your pharmacy.');
+  }
+}
+
 function assertHospitalScope(user, hospitalId) {
   if (user.role === 'admin') return;
   const assignedHospitalId = hospitalIdFor(user);
@@ -39,8 +51,10 @@ function assertRoomScope(user, room) {
 
 module.exports = {
   assertHospitalScope,
+  assertPharmacyScope,
   assertRoomScope,
   assertServiceScope,
   hospitalIdFor,
+  pharmacyIdFor,
   serviceIdFor,
 };

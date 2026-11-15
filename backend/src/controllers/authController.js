@@ -42,6 +42,7 @@ function userResponse(user) {
     roles: getUserRoles(user),
     serviceId: user.serviceId,
     hospitalId: user.hospitalId || null,
+    pharmacyId: user.pharmacyId || null,
     serviceIds: user.serviceIds?.length
       ? user.serviceIds
       : user.serviceId

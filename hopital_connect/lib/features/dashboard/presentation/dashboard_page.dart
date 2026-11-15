@@ -20,6 +20,7 @@ import '../../hospital/presentation/hospital_tab.dart';
 import '../../planning/data/shift_service.dart';
 import '../../planning/domain/shift.dart';
 import '../../planning/presentation/planning_tab.dart';
+import '../../pharmacy/presentation/pharmacy_tab.dart';
 import '../../services/data/service_service.dart';
 import '../../services/domain/hospital_service.dart';
 import '../../services/presentation/service_form_dialog.dart';
@@ -150,6 +151,22 @@ class _DashboardPageState extends State<DashboardPage> {
           _interventions = const [];
           _doctors = results[1] as List<AppointmentDoctor>;
           _colleagues = const [];
+        });
+        return;
+      }
+      if (user.role == StaffRole.pharmacist) {
+        if (!mounted) return;
+        setState(() {
+          _user = user;
+          _users = const [];
+          _services = const [];
+          _shifts = const [];
+          _handovers = const [];
+          _appointments = const [];
+          _interventions = const [];
+          _doctors = const [];
+          _colleagues = const [];
+          _notifications = const [];
         });
         return;
       }
@@ -781,6 +798,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final isPatient = _user.role == StaffRole.patient;
     final isSecretary = _user.role == StaffRole.secretary;
+    final isPharmacist = _user.role == StaffRole.pharmacist;
     final isAdmin = _user.role == StaffRole.administrator;
     final isDoctor = _user.role == StaffRole.doctor;
     final doctorServices = isDoctor
@@ -839,6 +857,16 @@ class _DashboardPageState extends State<DashboardPage> {
               onStatusChange: _updateAppointmentStatus,
               onRespondProposal: _respondToProposal,
             ),
+            PatientProfileTab(
+              user: _user,
+              onSave: _updatePatientProfile,
+              onSignOut: () => _signOut(),
+              onSwitchRole: _showRoleSwitcher,
+            ),
+          ]
+        : isPharmacist
+        ? <Widget>[
+            PharmacyTab(user: _user),
             PatientProfileTab(
               user: _user,
               onSave: _updatePatientProfile,
@@ -1039,6 +1067,19 @@ class _DashboardPageState extends State<DashboardPage> {
               label: 'Hôpital',
             ),
           ]
+        : isPharmacist
+        ? const <NavigationDestination>[
+            NavigationDestination(
+              icon: Icon(Icons.medication_outlined),
+              selectedIcon: Icon(Icons.medication),
+              label: 'Pharmacie',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.person_outline),
+              selectedIcon: Icon(Icons.person),
+              label: 'Profil',
+            ),
+          ]
         : <NavigationDestination>[
             const NavigationDestination(
               icon: Icon(Icons.grid_view_outlined),
@@ -1103,6 +1144,8 @@ class _DashboardPageState extends State<DashboardPage> {
         ? isArabic
               ? const ['مساحة المريض', 'متابعتي', 'مواعيدي', 'ملفي']
               : const ['Accueil', 'Mes suivis', 'Mes RDV', 'Profil']
+        : isPharmacist
+        ? const ['Gestion Pharmacie', 'Profil']
         : isDoctor
         ? const [
             'Accueil',
@@ -1115,7 +1158,9 @@ class _DashboardPageState extends State<DashboardPage> {
         : isSecretary
         ? const ['Espace secrétaire', 'Rendez-vous', 'Ressources hospitalières']
         : [..._titles, if (isAdmin) 'Rendez-vous'];
-    final hospitalPageIndex = isSecretary
+    final hospitalPageIndex = isPharmacist
+        ? -1
+        : isSecretary
         ? 2
         : isDoctor
         ? 5

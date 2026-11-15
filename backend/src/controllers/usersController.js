@@ -19,6 +19,7 @@ const {
 const CREATE_FIELDS = [
   'username', 'email', 'password', 'role', 'roles', 'serviceId', 'serviceIds',
   'hospitalId',
+  'pharmacyId',
   'specialty', 'photoUrl', 'active',
 ];
 const UPDATE_FIELDS = CREATE_FIELDS;
@@ -51,6 +52,7 @@ function parseUserFields(body, { creating = false } = {}) {
     result.role = primaryRole;
   }
   if (creating || body.serviceId !== undefined) result.serviceId = body.serviceId ?? null;
+  if (creating || body.pharmacyId !== undefined) result.pharmacyId = body.pharmacyId ?? null;
   if (creating || body.serviceIds !== undefined) {
     if (body.serviceIds !== undefined && !Array.isArray(body.serviceIds)) {
       throw new HttpError(400, 'serviceIds must be an array.');
@@ -94,12 +96,24 @@ async function validateHospital(hospitalId) {
   return id;
 }
 
+async function validatePharmacy(pharmacyId) {
+  if (pharmacyId === null) return null;
+  const id = requireId(pharmacyId, 'pharmacyId');
+  const Pharmacy = require('../models/Pharmacy');
+  if (!(await Pharmacy.exists({ _id: id }))) throw new HttpError(400, 'pharmacyId does not exist.');
+  return id;
+}
+
 async function validateResourceAssignments(fields, roles) {
   fields.hospitalId = await validateHospital(fields.hospitalId);
+  fields.pharmacyId = await validatePharmacy(fields.pharmacyId ?? null);
   const hasServiceManager = roles.includes('service_head');
   const hasBlockManager = roles.includes('operating_room_manager');
   if (hasServiceManager && (!fields.serviceId || !fields.hospitalId)) {
     throw new HttpError(400, 'A service manager must be assigned to a hospital and service.');
+  }
+  if (roles.includes('pharmacist') && !fields.pharmacyId) {
+    throw new HttpError(400, 'A pharmacist must be assigned to a pharmacy.');
   }
   if (hasBlockManager && !fields.hospitalId) {
     throw new HttpError(400, 'An operating room manager must be assigned to a hospital.');
@@ -221,6 +235,7 @@ async function create(req, res) {
   rejectUnknownFields(body, CREATE_FIELDS);
   const fields = parseUserFields(body, { creating: true });
   fields.serviceId = await validateService(fields.serviceId);
+  fields.pharmacyId = await validatePharmacy(fields.pharmacyId);
   fields.serviceIds = await validateServiceIds(fields.serviceIds);
   await validateResourceAssignments(fields, fields.roles);
   const hasServiceRole = fields.roles.includes('secretary') ||
@@ -270,6 +285,9 @@ async function update(req, res) {
     serviceId: fields.serviceId === undefined
       ? currentUser.serviceId || null
       : fields.serviceId,
+    pharmacyId: fields.pharmacyId === undefined
+      ? currentUser.pharmacyId || null
+      : fields.pharmacyId,
   };
   if (assignedRoles.includes('service_head') &&
       !assignmentFields.hospitalId &&
@@ -280,6 +298,12 @@ async function update(req, res) {
     if (hospitals.length === 1) assignmentFields.hospitalId = hospitals[0]._id;
   }
   await validateResourceAssignments(assignmentFields, assignedRoles);
+  if (assignedRoles.includes('pharmacist') && !assignmentFields.pharmacyId) {
+    throw new HttpError(400, 'A pharmacist must be assigned to a pharmacy.');
+  }
+  if (fields.pharmacyId !== undefined || assignedRoles.includes('pharmacist')) {
+    fields.pharmacyId = assignmentFields.pharmacyId;
+  }
   if (fields.hospitalId !== undefined || assignedRoles.includes('service_head') ||
       assignedRoles.includes('operating_room_manager')) {
     fields.hospitalId = assignmentFields.hospitalId;

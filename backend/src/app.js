@@ -15,6 +15,7 @@ const bedRoutes = require('./routes/bedRoutes');
 const operatingRoomRoutes = require('./routes/operatingRoomRoutes');
 const interventionRoutes = require('./routes/interventionRoutes');
 const equipmentRoutes = require('./routes/equipmentRoutes');
+const pharmacyRoutes = require('./routes/pharmacyRoutes');
 
 const app = express();
 
@@ -50,6 +51,7 @@ app.use('/beds', bedRoutes);
 app.use('/operating-rooms', operatingRoomRoutes);
 app.use('/interventions', interventionRoutes);
 app.use('/equipment', equipmentRoutes);
+app.use('/pharmacy', pharmacyRoutes);
 app.use(notFound);
 app.use(errorHandler);
 

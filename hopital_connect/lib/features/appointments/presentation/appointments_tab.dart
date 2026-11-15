@@ -1050,7 +1050,7 @@ class _AppointmentFormDialogState extends State<AppointmentFormDialog> {
       );
     }
     final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day + 1);
+    return DateTime(now.year, now.month, now.day);
   }
 
   Future<void> _loadDoctors() async {

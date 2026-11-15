@@ -11,6 +11,7 @@ const userSchema = new mongoose.Schema({
   address: { type: String, trim: true, maxlength: 240, default: '' },
   emergencyContact: { type: String, trim: true, maxlength: 160, default: '' },
   insurance: { type: String, trim: true, maxlength: 120, default: '' },
+  allergies: { type: [String], default: [] },
   language: { type: String, enum: ['fr', 'ar'], default: 'fr' },
   notificationPreferences: {
     appointments: { type: Boolean, default: true },
@@ -22,7 +23,7 @@ const userSchema = new mongoose.Schema({
     required: true,
     enum: [
       'admin', 'doctor', 'nurse', 'secretary', 'service_head',
-      'operating_room_manager', 'patient',
+      'operating_room_manager', 'pharmacist', 'patient',
     ],
   },
   roles: {
@@ -30,13 +31,14 @@ const userSchema = new mongoose.Schema({
       type: String,
       enum: [
         'admin', 'doctor', 'nurse', 'secretary', 'service_head',
-        'operating_room_manager', 'patient',
+        'operating_room_manager', 'pharmacist', 'patient',
       ],
     }],
     default: undefined,
   },
   serviceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Service', default: null },
   hospitalId: { type: mongoose.Schema.Types.ObjectId, ref: 'Hospital', default: null },
+  pharmacyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Pharmacy', default: null },
   serviceIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Service' }],
   specialty: { type: String, trim: true, maxlength: 120, default: '' },
   photoUrl: { type: String, trim: true, maxlength: 500, default: '' },

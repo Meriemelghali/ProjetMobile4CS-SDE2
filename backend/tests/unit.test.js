@@ -126,6 +126,7 @@ test('room number uniqueness is scoped to a service', () => {
 
   assert.deepEqual(uniqueIndex?.[0], {
     serviceId: 1,
+    floor: 1,
     number: 1,
   });
 });
@@ -157,6 +158,7 @@ test('operating room numbers are unique within a hospital', () => {
 
   assert.deepEqual(uniqueIndex?.[0], {
     hospitalId: 1,
+    name: 1,
     number: 1,
   });
 });
@@ -176,13 +178,14 @@ test('user response only includes Flutter contract fields', () => {
   assert.deepEqual(Object.keys(user), [
     '_id', 'username', 'email', 'firstName', 'lastName', 'birthDate', 'phone',
     'address', 'emergencyContact', 'insurance', 'language',
-    'notificationPreferences', 'role', 'roles', 'serviceId', 'hospitalId', 'serviceIds',
+    'notificationPreferences', 'role', 'roles', 'serviceId', 'hospitalId', 'pharmacyId', 'serviceIds',
     'specialty', 'photoUrl', 'active',
   ]);
   assert.deepEqual(user.roles, ['doctor', 'service_head']);
   assert.equal(user.username, 'Ada');
   assert.deepEqual(user.serviceIds, []);
   assert.equal(user.hospitalId, null);
+  assert.equal(user.pharmacyId, null);
 });
 
 test('secretary responses include all assigned service identifiers', () => {
@@ -411,7 +414,7 @@ test('intervention links expose IDs only and require doctor/patient user referen
     status: 'scheduled',
   });
   assert.deepEqual(Object.keys(intervention), [
-    '_id', 'surgeonId', 'patientId', 'operatingRoomId', 'operatingRoomName',
+    '_id', 'surgeonId', 'surgeonName', 'patientId', 'operatingRoomId', 'operatingRoomName',
     'serviceId', 'equipmentIds', 'title', 'start', 'end', 'status',
   ]);
   assert.equal(intervention.surgeonId, 'doctor-user-id');

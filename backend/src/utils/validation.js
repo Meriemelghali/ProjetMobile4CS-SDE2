@@ -3,7 +3,7 @@ const { HttpError } = require('../errors');
 
 const ROLES = [
   'admin', 'doctor', 'nurse', 'secretary', 'service_head',
-  'operating_room_manager', 'patient',
+  'operating_room_manager', 'pharmacist', 'patient',
 ];
 const APPOINTMENT_STATUSES = [
   'pending', 'accepted', 'in_progress', 'proposed', 'rejected', 'cancelled',

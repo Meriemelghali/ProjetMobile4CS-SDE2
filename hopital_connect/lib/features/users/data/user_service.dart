@@ -58,6 +58,7 @@ class UserService {
     List<String> roles = const [],
     String? hospitalId,
     String? serviceId,
+    String? pharmacyId,
     List<String> serviceIds = const [],
     String specialty = '',
     String photoUrl = '',
@@ -72,6 +73,7 @@ class UserService {
         'roles': roles.isEmpty ? [role] : roles,
         'hospitalId': ?hospitalId,
         'serviceId': ?serviceId,
+        'pharmacyId': ?pharmacyId,
         if (serviceIds.isNotEmpty ||
             role == 'secretary' ||
             roles.contains('secretary'))
