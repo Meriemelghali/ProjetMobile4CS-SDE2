@@ -129,13 +129,14 @@ test('appointment response exposes patient and secretary fields with allowed sta
     'accepted', 'rejected', 'proposed', 'cancelled',
   ]);
   assert.deepEqual(STATUS_TRANSITIONS.cancelled, []);
+  assert.deepEqual(STATUS_TRANSITIONS.in_progress, ['completed', 'cancelled']);
   assert.equal(appointment.isOverdue, false);
 });
 
 test('appointment schema supports optional motives and secretary decisions', () => {
   assert.notEqual(Appointment.schema.path('reason').options.required, true);
   assert.deepEqual(Appointment.schema.path('status').enumValues, [
-    'pending', 'accepted', 'in_progress', 'proposed', 'rejected', 'cancelled',
+    'pending', 'accepted', 'in_progress', 'completed', 'proposed', 'rejected', 'cancelled',
   ]);
 });
 
@@ -674,7 +675,7 @@ test('notification response exposes persisted in-app appointment updates', () =>
     readAt: null,
   });
   assert.deepEqual(Object.keys(notification), [
-    '_id', 'appointmentId', 'title', 'message', 'createdAt', 'readAt',
+    '_id', 'appointmentId', 'prescriptionId', 'title', 'message', 'createdAt', 'readAt',
   ]);
 });
 

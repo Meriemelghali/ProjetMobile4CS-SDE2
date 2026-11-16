@@ -25,7 +25,8 @@ const MANAGER_ROLES = ['admin', 'secretary'];
 const STATUS_TRANSITIONS = {
   pending: ['accepted', 'rejected', 'proposed', 'cancelled'],
   accepted: ['in_progress', 'cancelled'],
-  in_progress: ['cancelled'],
+  in_progress: ['completed', 'cancelled'],
+  completed: [],
   proposed: ['cancelled'],
   rejected: [],
   cancelled: [],
@@ -249,10 +250,13 @@ async function parseFields(body, {
   secretary = false,
   secretaryUser = null,
   patientUpdate = false,
+  doctorUpdate = false,
 } = {}) {
   const fields = {};
   const allowedFields = secretary
     ? SECRETARY_FIELDS
+    : doctorUpdate
+      ? ['status']
     : patientUpdate
       ? PATIENT_UPDATE_FIELDS
       : PATIENT_FIELDS;
@@ -283,7 +287,7 @@ async function parseFields(body, {
       ? ''
       : requireString(body.reason, 'reason', { max: 500, min: 0 });
   }
-  if ((secretary || patientUpdate) && body.status !== undefined) {
+  if ((secretary || patientUpdate || doctorUpdate) && body.status !== undefined) {
     fields.status = requireAppointmentStatus(body.status);
   }
   return fields;
@@ -460,11 +464,13 @@ async function update(req, res) {
   const body = requireObject(req.body);
   const isSecretary = req.user.role === 'secretary';
   const isManager = MANAGER_ROLES.includes(req.user.role);
+  const isDoctor = req.user.role === 'doctor';
   const isPatient = req.user.role === 'patient';
   const fields = await parseFields(body, {
     secretary: isManager,
     secretaryUser: isSecretary ? req.user : null,
     patientUpdate: isPatient,
+    doctorUpdate: isDoctor,
   });
   if (!Object.keys(fields).length) {
     throw new HttpError(400, 'At least one field must be provided.');
@@ -480,6 +486,9 @@ async function update(req, res) {
     throw new HttpError(404, 'Appointment not found.');
   }
   if (isSecretary && !(await canAccessService(req.user, current))) {
+    throw new HttpError(404, 'Appointment not found.');
+  }
+  if (isDoctor && current.doctorId._id.toString() !== req.user._id.toString()) {
     throw new HttpError(404, 'Appointment not found.');
   }
   if (current.status === 'cancelled' || current.status === 'rejected') {
@@ -505,12 +514,15 @@ async function update(req, res) {
          current.claimedAt < new Date(Date.now() - CLAIM_DURATION_MS))) {
       throw new HttpError(409, 'Claim this request before managing it.');
     }
-    if (isManager &&
+    if ((isManager || isDoctor) &&
         (!STATUS_TRANSITIONS[current.status].includes(fields.status) ||
-         ['rejected', 'proposed'].includes(fields.status))) {
+         ['rejected', 'proposed'].includes(fields.status) ||
+         (isDoctor && fields.status !== 'in_progress' && fields.status !== 'completed'))) {
       throw new HttpError(
         409,
-        'Use the decision endpoint to reject a request or propose a new time.',
+        isDoctor
+          ? 'Doctors can only start or complete their own appointments.'
+          : 'Use the decision endpoint to reject a request or propose a new time.',
       );
     }
   }

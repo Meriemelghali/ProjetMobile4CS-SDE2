@@ -6,7 +6,7 @@ const ROLES = [
   'operating_room_manager', 'pharmacist', 'patient',
 ];
 const APPOINTMENT_STATUSES = [
-  'pending', 'accepted', 'in_progress', 'proposed', 'rejected', 'cancelled',
+  'pending', 'accepted', 'in_progress', 'completed', 'proposed', 'rejected', 'cancelled',
 ];
 
 function requireObject(value, label = 'Request body') {

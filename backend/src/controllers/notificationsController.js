@@ -6,6 +6,7 @@ function notificationResponse(notification) {
   return {
     _id: notification._id,
     appointmentId: notification.appointmentId,
+    prescriptionId: notification.prescriptionId || null,
     title: notification.title,
     message: notification.message,
     createdAt: notification.createdAt,

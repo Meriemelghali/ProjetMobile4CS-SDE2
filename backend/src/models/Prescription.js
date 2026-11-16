@@ -8,6 +8,7 @@ const prescribedMedicationSchema = new mongoose.Schema({
 }, { _id: false });
 
 const prescriptionSchema = new mongoose.Schema({
+  appointmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Appointment', unique: true, sparse: true, index: true },
   patientId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   doctorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   pharmacyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Pharmacy', required: true, index: true },
