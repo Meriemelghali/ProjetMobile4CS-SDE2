@@ -219,7 +219,9 @@ class _DashboardPageState extends State<DashboardPage> {
       final shifts = isOperatingRoomManager
           ? <Shift>[]
           // Admin et chef de service : pas de filtre userId (le backend filtre par service pour service_head)
-          : await ShiftService().list(userId: (isAdmin || isServiceHead) ? null : user.id);
+          : await ShiftService().list(
+              userId: (isAdmin || isServiceHead) ? null : user.id,
+            );
       String? serviceHeadServiceId;
       if (user.role == StaffRole.serviceHead) {
         for (final service in services) {
@@ -462,6 +464,7 @@ class _DashboardPageState extends State<DashboardPage> {
       _showError(error);
     }
   }
+
   Future<void> _editShift(Shift shift) async {
     final isServiceHead = _user.role == StaffRole.serviceHead;
     final availableServices = isServiceHead ? _managedServices : _services;
@@ -494,8 +497,11 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     final edited = await showDialog<Shift>(
       context: context,
-      builder: (_) =>
-          NewShiftDialog(services: availableServices, users: doctors, shift: shift),
+      builder: (_) => NewShiftDialog(
+        services: availableServices,
+        users: doctors,
+        shift: shift,
+      ),
     );
     if (edited == null || !mounted) return;
     try {
@@ -505,6 +511,7 @@ class _DashboardPageState extends State<DashboardPage> {
       _showError(error);
     }
   }
+
   Future<void> _deleteShift(Shift shift) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -941,9 +948,9 @@ class _DashboardPageState extends State<DashboardPage> {
     final isAdmin = _user.role == StaffRole.administrator;
     final isServiceHead = _user.role == StaffRole.serviceHead;
     // Le chef de service peut modifier/supprimer les gardes de son service.
-    final canManage = isAdmin ||
-        (isServiceHead &&
-            _managedServices.any((s) => s.id == shift.serviceId));
+    final canManage =
+        isAdmin ||
+        (isServiceHead && _managedServices.any((s) => s.id == shift.serviceId));
     final action = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
@@ -1039,6 +1046,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> _showMoreDestinations(
     List<NavigationDestination> destinations,
+    List<int> overflowIndices,
   ) async {
     final selectedPage = await showModalBottomSheet<int>(
       context: context,
@@ -1047,7 +1055,7 @@ class _DashboardPageState extends State<DashboardPage> {
         child: ListView(
           shrinkWrap: true,
           children: [
-            for (var index = 4; index < destinations.length; index++)
+            for (final index in overflowIndices)
               ListTile(
                 leading: destinations[index].icon,
                 title: Text(destinations[index].label),
@@ -1065,9 +1073,10 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget? _buildFloatingActionButton(bool isPatient, bool isAdmin) {
     final isServiceHead = _user.role == StaffRole.serviceHead;
     // Admin : Planning est en index 4 ; chef de service : Planning est en index 1.
-    final showAddShift = !isPatient &&
+    final showAddShift =
+        !isPatient &&
         ((isAdmin && _selectedIndex == 4) ||
-         (isServiceHead && _selectedIndex == 1));
+            (isServiceHead && _selectedIndex == 1));
     if (showAddShift) {
       return FloatingActionButton.extended(
         onPressed: _addShift,
@@ -1077,12 +1086,10 @@ class _DashboardPageState extends State<DashboardPage> {
         label: const Text('Ajouter une garde'),
       );
     }
-    // Note de transmission (Transmissions = index 3 pour doctor/nurse, absent pour admin)
-    final showAddHandover = !isPatient &&
-        _user.role != StaffRole.secretary &&
-        !isAdmin &&
-        !isServiceHead &&
-        _selectedIndex == 3;
+    // Note de transmission : onglet Relèves = index 5 pour le médecin
+    // (Accueil, Rendez-vous, Ordonnances, Planning, Service, Relèves…).
+    final showAddHandover =
+        _user.role == StaffRole.doctor && _selectedIndex == 5;
     if (showAddHandover) {
       return FloatingActionButton.extended(
         onPressed: _addHandover,
@@ -1106,7 +1113,11 @@ class _DashboardPageState extends State<DashboardPage> {
     final isNurse = _user.role == StaffRole.nurse;
     // Dossier médical : onglet ajouté en dernière position pour ne pas
     // décaler les index des onglets existants.
-    final medicalRecordsIndex = isDoctor ? 6 : (isAdmin ? 6 : (isNurse ? 4 : -1));
+    // Médecin : Accueil 0, Rendez-vous 1, Ordonnances 2, Planning 3,
+    // Service 4, Relèves 5, Profil 6, Hôpital 7, Dossiers 8.
+    final medicalRecordsIndex = isDoctor
+        ? 8
+        : (isAdmin ? 6 : (isNurse ? 4 : -1));
     final medicalRecordsTab = PatientRecordsTab(
       viewerRole: _user.role,
       viewerId: _user.id,
@@ -1529,6 +1540,14 @@ class _DashboardPageState extends State<DashboardPage> {
               selectedIcon: Icon(Icons.local_hospital_rounded),
               label: 'Service',
             ),
+            // Relèves : l'écran HandoversTab du médecin (index 5) avait perdu
+            // son entrée de menu, ce qui décalait Profil, Hôpital et Dossiers.
+            if (isDoctor)
+              const NavigationDestination(
+                icon: Icon(Icons.forum_outlined),
+                selectedIcon: Icon(Icons.forum_rounded),
+                label: 'Relèves',
+              ),
             if (isDoctor)
               const NavigationDestination(
                 icon: Icon(Icons.person_outline),
@@ -1549,9 +1568,21 @@ class _DashboardPageState extends State<DashboardPage> {
           ];
 
     final hasMoreDestinations = destinations.length > 5;
+    // Onglets affichés dans la barre du bas quand il y en a trop : pour le
+    // médecin et l'infirmier, « Dossiers » est mis en avant au lieu d'être
+    // caché dans « Plus ». Les index des pages ne changent pas.
+    final pinnedIndices = !hasMoreDestinations
+        ? List<int>.generate(destinations.length, (index) => index)
+        : medicalRecordsIndex >= 0
+        ? <int>[0, medicalRecordsIndex, 1, 3]
+        : const <int>[0, 1, 2, 3];
+    final overflowIndices = [
+      for (var index = 0; index < destinations.length; index++)
+        if (!pinnedIndices.contains(index)) index,
+    ];
     final visibleDestinations = hasMoreDestinations
         ? <NavigationDestination>[
-            ...destinations.take(4),
+            for (final index in pinnedIndices) destinations[index],
             const NavigationDestination(
               icon: Icon(Icons.more_horiz),
               selectedIcon: Icon(Icons.more_horiz),
@@ -1559,9 +1590,10 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
           ]
         : destinations;
-    final visibleSelectedIndex = hasMoreDestinations && _selectedIndex >= 4
-        ? 4
-        : _selectedIndex;
+    final pinnedPosition = pinnedIndices.indexOf(_selectedIndex);
+    final visibleSelectedIndex = pinnedPosition >= 0
+        ? pinnedPosition
+        : (hasMoreDestinations ? pinnedIndices.length : _selectedIndex);
     final titles = isPatient
         ? isArabic
               ? const ['مساحة المريض', 'سجلي الطبي', 'مواعيدي', 'ملفي']
@@ -1604,7 +1636,7 @@ class _DashboardPageState extends State<DashboardPage> {
         : isSecretary
         ? 2
         : isDoctor
-        ? 5
+        ? 7
         : isAdmin
         ? 1
         : 3;
@@ -1703,10 +1735,10 @@ class _DashboardPageState extends State<DashboardPage> {
           selectedIndex: visibleSelectedIndex,
           labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
           onDestinationSelected: (index) {
-            if (hasMoreDestinations && index == 4) {
-              _showMoreDestinations(destinations);
+            if (hasMoreDestinations && index == pinnedIndices.length) {
+              _showMoreDestinations(destinations, overflowIndices);
             } else {
-              setState(() => _selectedIndex = index);
+              setState(() => _selectedIndex = pinnedIndices[index]);
             }
           },
           destinations: visibleDestinations,
@@ -1824,18 +1856,18 @@ class _HomeTabState extends State<HomeTab> {
 
     final assignedServices = user.role == StaffRole.serviceHead
         ? widget.services
-            .where(
-              (s) =>
-                  s.id == user.serviceId ||
-                  s.headUserId == user.id ||
-                  user.serviceIds.contains(s.id),
-            )
-            .toList()
+              .where(
+                (s) =>
+                    s.id == user.serviceId ||
+                    s.headUserId == user.id ||
+                    user.serviceIds.contains(s.id),
+              )
+              .toList()
         : widget.services
-            .where(
-              (s) => s.id == user.serviceId || user.serviceIds.contains(s.id),
-            )
-            .toList();
+              .where(
+                (s) => s.id == user.serviceId || user.serviceIds.contains(s.id),
+              )
+              .toList();
 
     if (assignedServices.isNotEmpty) {
       return assignedServices.map((s) => s.name).join(', ');
