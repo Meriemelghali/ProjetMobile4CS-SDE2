@@ -173,7 +173,7 @@ class _PatientRecordsTabState extends State<PatientRecordsTab> {
           FadeSlideIn(
             child: _HeroCard(
               viewerName: widget.viewerName,
-              isNurse: widget.viewerRole == StaffRole.nurse,
+              isDoctor: widget.viewerRole == StaffRole.doctor,
               total: _patients.length,
               severe: severe,
               withoutRecord: withoutRecord,
@@ -281,7 +281,7 @@ class _PatientRecordsTabState extends State<PatientRecordsTab> {
 class _HeroCard extends StatelessWidget {
   const _HeroCard({
     required this.viewerName,
-    required this.isNurse,
+    required this.isDoctor,
     required this.total,
     required this.severe,
     required this.withoutRecord,
@@ -289,7 +289,7 @@ class _HeroCard extends StatelessWidget {
   });
 
   final String viewerName;
-  final bool isNurse;
+  final bool isDoctor;
   final int total;
   final int severe;
   final int withoutRecord;
@@ -306,13 +306,6 @@ class _HeroCard extends StatelessWidget {
       decoration: BoxDecoration(
         gradient: RecordColors.headerGradient,
         borderRadius: BorderRadius.circular(26),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x33123047),
-            blurRadius: 24,
-            offset: Offset(0, 12),
-          ),
-        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -324,7 +317,7 @@ class _HeroCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '$greeting${viewerName.isEmpty ? '' : ', ${isNurse ? '' : 'Dr '}$viewerName'}',
+                      '$greeting${viewerName.isEmpty ? '' : ', ${isDoctor ? 'Dr ' : ''}$viewerName'}',
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.8),
                       ),

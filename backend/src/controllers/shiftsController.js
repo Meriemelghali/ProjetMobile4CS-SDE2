@@ -92,9 +92,35 @@ async function parseFields(body, creating = false) {
   return fields;
 }
 
+async function getManagedServiceIdsForUser(user) {
+  const userServices = [
+    ...(user.serviceId ? [user.serviceId] : []),
+    ...(user.serviceIds || []),
+  ];
+  const query = {
+    $or: [
+      { headUserId: user._id },
+      ...(userServices.length > 0 ? [{ _id: { $in: userServices } }] : []),
+    ],
+  };
+  const services = await Service.find(query).select('_id headUserId');
+  return services.map((s) => String(s._id));
+}
+
 async function list(req, res) {
   const query = {};
-  if (['doctor', 'service_head', 'secretary'].includes(req.user.role)) {
+  if (req.user.role === 'service_head') {
+    // Le chef de service voit toutes les gardes de ses services.
+    const managedServiceIds = await getManagedServiceIdsForUser(req.user);
+    if (req.query.userId !== undefined) {
+      query.userId = requireId(req.query.userId, 'userId');
+    }
+    if (managedServiceIds.length > 0) {
+      query.serviceId = { $in: managedServiceIds };
+    } else {
+      return res.json({ shifts: [] });
+    }
+  } else if (['doctor', 'secretary'].includes(req.user.role)) {
     if (req.query.userId !== undefined && String(req.query.userId) !== String(req.user._id)) {
       throw new HttpError(403, 'Users can only view their own shifts.');
     }
@@ -115,10 +141,22 @@ async function list(req, res) {
   return res.json({ shifts: shifts.map(shiftResponse) });
 }
 
+async function assertServiceHeadOwnsService(user, serviceId) {
+  if (user.role !== 'service_head') return;
+  const managedIds = await getManagedServiceIdsForUser(user);
+  if (!managedIds.includes(String(serviceId))) {
+    throw new HttpError(
+      403,
+      'En tant que chef de service, vous ne pouvez gérer que les gardes de votre propre service.',
+    );
+  }
+}
+
 async function create(req, res) {
   const body = requireObject(req.body);
   rejectUnknownFields(body, FIELDS);
   const fields = await parseFields(body, true);
+  await assertServiceHeadOwnsService(req.user, fields.serviceId);
   await validateDoctorService(fields.userId, fields.serviceId);
   const shift = await Shift.create(fields);
   await populateShift(shift);
@@ -133,12 +171,14 @@ async function update(req, res) {
   if (!Object.keys(fields).length) throw new HttpError(400, 'At least one field must be provided.');
   const current = await Shift.findById(id);
   if (!current) throw new HttpError(404, 'Shift not found.');
+  const resolvedServiceId = fields.serviceId ?? current.serviceId;
+  await assertServiceHeadOwnsService(req.user, resolvedServiceId);
   const start = fields.start || current.start;
   const end = fields.end || current.end;
   if (end <= start) throw new HttpError(400, 'end must be after start.');
   await validateDoctorService(
     fields.userId ?? current.userId,
-    fields.serviceId ?? current.serviceId,
+    resolvedServiceId,
   );
   const shift = await Shift.findByIdAndUpdate(
     id,
@@ -151,8 +191,9 @@ async function update(req, res) {
 
 async function remove(req, res) {
   const id = requireId(req.params.id, 'shift id');
-  const shift = await Shift.findById(id);
+  const shift = await Shift.findById(id).populate('serviceId', 'headUserId');
   if (!shift) throw new HttpError(404, 'Shift not found.');
+  await assertServiceHeadOwnsService(req.user, shift.serviceId?._id ?? shift.serviceId);
   await shift.deleteOne();
   return res.json({ shift: shiftResponse(shift) });
 }

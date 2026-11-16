@@ -208,9 +208,11 @@ class _DashboardPageState extends State<DashboardPage> {
       );
       final isOperatingRoomManager =
           user.role == StaffRole.operatingRoomManager;
+      final isServiceHead = user.role == StaffRole.serviceHead;
       final shifts = isOperatingRoomManager
           ? <Shift>[]
-          : await ShiftService().list(userId: isAdmin ? null : user.id);
+          // Admin et chef de service : pas de filtre userId (le backend filtre par service pour service_head)
+          : await ShiftService().list(userId: (isAdmin || isServiceHead) ? null : user.id);
       String? serviceHeadServiceId;
       if (user.role == StaffRole.serviceHead) {
         for (final service in services) {
@@ -236,7 +238,11 @@ class _DashboardPageState extends State<DashboardPage> {
           ? await UserService().list()
           : isDoctor || user.role == StaffRole.secretary
           ? await UserService().listInterventionParticipants()
-          : user.role == StaffRole.nurse || user.role == StaffRole.serviceHead
+          : isServiceHead
+          // Le chef de service a besoin de la liste des médecins (pour ajouter des gardes)
+          // et des patients assignables.
+          ? await UserService().list()
+          : user.role == StaffRole.nurse
           ? await UserService().listAssignablePatients()
           : const <StaffUser>[];
       final appointments = isAdmin || isDoctor
@@ -412,18 +418,34 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _addShift() async {
-    final doctors = _doctorAccounts;
-    if (_services.isEmpty || doctors.isEmpty) {
+    final isServiceHead = _user.role == StaffRole.serviceHead;
+    // Pour le chef de service : filtrer les services et médecins à ceux de son service uniquement.
+    final availableServices = isServiceHead ? _managedServices : _services;
+    final managedServiceIds = availableServices.map((s) => s.id).toSet();
+    final availableDoctors = isServiceHead
+        ? _doctorAccounts
+              .where(
+                (doctor) =>
+                    _serviceIdsFor(doctor)
+                        .any((id) => managedServiceIds.contains(id)) ||
+                    managedServiceIds.contains(doctor.serviceId),
+              )
+              .toList()
+        : _doctorAccounts;
+    if (availableServices.isEmpty || availableDoctors.isEmpty) {
       _showError(
-        const ApiException(
-          'Ajoutez un service et un compte médecin actif avec une spécialité avant d’ajouter une garde.',
+        ApiException(
+          isServiceHead
+              ? "Aucun médecin actif avec une spécialité n'est rattaché à votre service."
+              : "Ajoutez un service et un compte médecin actif avec une spécialité avant d'ajouter une garde.",
         ),
       );
       return;
     }
     final draft = await showDialog<Shift>(
       context: context,
-      builder: (_) => NewShiftDialog(services: _services, users: doctors),
+      builder: (_) =>
+          NewShiftDialog(services: availableServices, users: availableDoctors),
     );
     if (draft == null || !mounted) return;
     try {
@@ -433,10 +455,21 @@ class _DashboardPageState extends State<DashboardPage> {
       _showError(error);
     }
   }
-
   Future<void> _editShift(Shift shift) async {
-    final doctors = _doctorAccounts;
-    if (_services.isEmpty || doctors.isEmpty) {
+    final isServiceHead = _user.role == StaffRole.serviceHead;
+    final availableServices = isServiceHead ? _managedServices : _services;
+    final managedServiceIds = availableServices.map((s) => s.id).toSet();
+    final doctors = isServiceHead
+        ? _doctorAccounts
+              .where(
+                (doctor) =>
+                    _serviceIdsFor(doctor)
+                        .any((id) => managedServiceIds.contains(id)) ||
+                    managedServiceIds.contains(doctor.serviceId),
+              )
+              .toList()
+        : _doctorAccounts;
+    if (availableServices.isEmpty || doctors.isEmpty) {
       _showError(
         const ApiException(
           'Les services et les comptes médecin doivent être disponibles pour modifier une garde.',
@@ -455,7 +488,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final edited = await showDialog<Shift>(
       context: context,
       builder: (_) =>
-          NewShiftDialog(services: _services, users: doctors, shift: shift),
+          NewShiftDialog(services: availableServices, users: doctors, shift: shift),
     );
     if (edited == null || !mounted) return;
     try {
@@ -465,7 +498,6 @@ class _DashboardPageState extends State<DashboardPage> {
       _showError(error);
     }
   }
-
   Future<void> _deleteShift(Shift shift) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -900,6 +932,11 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> _showShiftDetails(Shift shift) async {
     final isAdmin = _user.role == StaffRole.administrator;
+    final isServiceHead = _user.role == StaffRole.serviceHead;
+    // Le chef de service peut modifier/supprimer les gardes de son service.
+    final canManage = isAdmin ||
+        (isServiceHead &&
+            _managedServices.any((s) => s.id == shift.serviceId));
     final action = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
@@ -908,7 +945,7 @@ class _DashboardPageState extends State<DashboardPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('${shift.day} · ${shift.time}'),
+            Text('${shift.day} \u00b7 ${shift.time}'),
             const SizedBox(height: 8),
             Text(
               'Service : ${shift.serviceName.isEmpty ? 'Non renseigné' : shift.serviceName}',
@@ -924,7 +961,7 @@ class _DashboardPageState extends State<DashboardPage> {
             onPressed: () => Navigator.pop(context),
             child: const Text('Fermer'),
           ),
-          if (isAdmin) ...[
+          if (canManage) ...[
             TextButton(
               onPressed: () => Navigator.pop(context, 'delete'),
               style: TextButton.styleFrom(foregroundColor: Colors.red),
@@ -1018,6 +1055,39 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  Widget? _buildFloatingActionButton(bool isPatient, bool isAdmin) {
+    final isServiceHead = _user.role == StaffRole.serviceHead;
+    // Admin : Planning est en index 4 ; chef de service : Planning est en index 1.
+    final showAddShift = !isPatient &&
+        ((isAdmin && _selectedIndex == 4) ||
+         (isServiceHead && _selectedIndex == 1));
+    if (showAddShift) {
+      return FloatingActionButton.extended(
+        onPressed: _addShift,
+        backgroundColor: AppColors.blue,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add),
+        label: const Text('Ajouter une garde'),
+      );
+    }
+    // Note de transmission (Transmissions = index 3 pour doctor/nurse, absent pour admin)
+    final showAddHandover = !isPatient &&
+        _user.role != StaffRole.secretary &&
+        !isAdmin &&
+        !isServiceHead &&
+        _selectedIndex == 3;
+    if (showAddHandover) {
+      return FloatingActionButton.extended(
+        onPressed: _addHandover,
+        backgroundColor: AppColors.blue,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add),
+        label: const Text('Nouvelle note'),
+      );
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
@@ -1029,7 +1099,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final isNurse = _user.role == StaffRole.nurse;
     // Dossier médical : onglet ajouté en dernière position pour ne pas
     // décaler les index des onglets existants.
-    final medicalRecordsIndex = isDoctor ? 6 : (isNurse ? 5 : -1);
+    final medicalRecordsIndex = isDoctor ? 6 : (isAdmin ? 6 : (isNurse ? 4 : -1));
     final medicalRecordsTab = PatientRecordsTab(
       viewerRole: _user.role,
       viewerId: _user.id,
@@ -1202,14 +1272,73 @@ class _DashboardPageState extends State<DashboardPage> {
               useMockData: _useMockHospitalData,
             ),
           ]
+        : isAdmin
+        ? <Widget>[
+            HomeTab(
+              user: _user,
+              services: _services,
+              nextShift: nextShift.isEmpty ? null : nextShift.first,
+              shifts: _shifts,
+              latestHandover: null,
+              handovers: const [],
+              onHandoverTap: _showHandoverDetails,
+              users: _users,
+              appointments: _appointments,
+              onNavigateToTab: (index) =>
+                  setState(() => _selectedIndex = index),
+              onRefresh: _load,
+              onValidateUser: _handleValidateUser,
+              onRejectUser: _handleRejectUser,
+            ),
+            HospitalTab(
+              canManage: true,
+              isVisible: _selectedIndex == 1,
+              hospitalsApi: HospitalResourceService(),
+              services: _services,
+              users: _users,
+              user: _user,
+              useMockData: _useMockHospitalData,
+            ),
+            AppointmentsTab(
+              appointments: _appointments,
+              services: _services,
+              isPatient: false,
+              onEdit: _editAppointment,
+              onStatusChange: _updateAppointmentStatus,
+              onClaim: _claimAppointment,
+              onRelease: _releaseAppointment,
+              onDecision: _decideAppointment,
+              currentUserId: _user.id,
+              isAdmin: true,
+            ),
+            AdminTab(
+              usersCount: _users.length,
+              shiftsCount: _shifts.length,
+              servicesCount: _services.length,
+              onManageUsers: _manageUsers,
+              onAddShift: _addShift,
+              onAddService: _addService,
+            ),
+            ScheduleTab(shifts: _shifts, onShiftTap: _showShiftDetails),
+            ServiceTab(
+              services: _services,
+              canEdit: true,
+              canEditDetails: false,
+              onEdit: _editService,
+              onDelete: _deleteService,
+              onToggleActive: _toggleServiceActive,
+              onAdd: _addService,
+            ),
+            medicalRecordsTab,
+          ]
         : <Widget>[
             HomeTab(
               user: _user,
               services: _services,
               nextShift: nextShift.isEmpty ? null : nextShift.first,
               shifts: _shifts,
-              latestHandover: _handovers.isEmpty ? null : _handovers.first,
-              handovers: _handovers,
+              latestHandover: null,
+              handovers: const [],
               onHandoverTap: _showHandoverDetails,
               users: _users,
               appointments: _appointments,
@@ -1222,47 +1351,22 @@ class _DashboardPageState extends State<DashboardPage> {
             ScheduleTab(shifts: _shifts, onShiftTap: _showShiftDetails),
             ServiceTab(
               services: _services,
-              canEdit: isAdmin,
+              canEdit: false,
               canEditDetails: _user.role == StaffRole.serviceHead,
               onEdit: _editService,
               onDelete: _deleteService,
               onToggleActive: _toggleServiceActive,
               onAdd: _addService,
             ),
-            HandoversTab(
-              handovers: _handovers,
-              onHandoverTap: _showHandoverDetails,
-            ),
             HospitalTab(
-              canManage: isAdmin,
-              isVisible: _selectedIndex == 4,
+              canManage: false,
+              isVisible: _selectedIndex == 3,
               hospitalsApi: HospitalResourceService(),
               services: _services,
               users: _users,
               user: _user,
               useMockData: _useMockHospitalData,
             ),
-            if (isAdmin)
-              AdminTab(
-                usersCount: _users.length,
-                shiftsCount: _shifts.length,
-                servicesCount: _services.length,
-                onManageUsers: _manageUsers,
-                onAddShift: _addShift,
-                onAddService: _addService,
-              ),
-            if (isAdmin)
-              AppointmentsTab(
-                appointments: _appointments,
-                isPatient: false,
-                onEdit: _editAppointment,
-                onStatusChange: _updateAppointmentStatus,
-                onClaim: _claimAppointment,
-                onRelease: _releaseAppointment,
-                onDecision: _decideAppointment,
-                currentUserId: _user.id,
-                isAdmin: true,
-              ),
             if (isNurse) medicalRecordsTab,
           ];
     final isArabic = isPatient && _user.language == 'ar';
@@ -1343,6 +1447,44 @@ class _DashboardPageState extends State<DashboardPage> {
               label: 'Profil',
             ),
           ]
+        : isAdmin
+        ? const <NavigationDestination>[
+            NavigationDestination(
+              icon: Icon(Icons.grid_view_outlined),
+              selectedIcon: Icon(Icons.grid_view_rounded),
+              label: 'Accueil',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.apartment_outlined),
+              selectedIcon: Icon(Icons.apartment),
+              label: 'Hôpital',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.event_available_outlined),
+              selectedIcon: Icon(Icons.event_available),
+              label: 'Rendez-vous',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.admin_panel_settings_outlined),
+              selectedIcon: Icon(Icons.admin_panel_settings),
+              label: 'Admin',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.calendar_month_outlined),
+              selectedIcon: Icon(Icons.calendar_month_rounded),
+              label: 'Planning',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.local_hospital_outlined),
+              selectedIcon: Icon(Icons.local_hospital_rounded),
+              label: 'Service',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.folder_shared_outlined),
+              selectedIcon: Icon(Icons.folder_shared),
+              label: 'Dossiers',
+            ),
+          ]
         : <NavigationDestination>[
             const NavigationDestination(
               icon: Icon(Icons.grid_view_outlined),
@@ -1359,11 +1501,6 @@ class _DashboardPageState extends State<DashboardPage> {
               selectedIcon: Icon(Icons.local_hospital_rounded),
               label: 'Service',
             ),
-            const NavigationDestination(
-              icon: Icon(Icons.forum_outlined),
-              selectedIcon: Icon(Icons.forum_rounded),
-              label: 'Relèves',
-            ),
             if (isDoctor)
               const NavigationDestination(
                 icon: Icon(Icons.person_outline),
@@ -1375,18 +1512,6 @@ class _DashboardPageState extends State<DashboardPage> {
               selectedIcon: Icon(Icons.apartment),
               label: 'Hôpital',
             ),
-            if (isAdmin)
-              const NavigationDestination(
-                icon: Icon(Icons.admin_panel_settings_outlined),
-                selectedIcon: Icon(Icons.admin_panel_settings),
-                label: 'Admin',
-              ),
-            if (isAdmin)
-              const NavigationDestination(
-                icon: Icon(Icons.event_available_outlined),
-                selectedIcon: Icon(Icons.event_available),
-                label: 'Rendez-vous',
-              ),
             if (isDoctor || isNurse)
               const NavigationDestination(
                 icon: Icon(Icons.folder_shared_outlined),
@@ -1427,9 +1552,21 @@ class _DashboardPageState extends State<DashboardPage> {
           ]
         : isSecretary
         ? const ['Espace secrétaire', 'Rendez-vous', 'Ressources hospitalières']
+        : isAdmin
+        ? const [
+            'Mon espace',
+            'Ressources hospitalières',
+            'Supervision des rendez-vous',
+            'Administration',
+            'Mon planning',
+            'Mon service',
+            'Dossiers médicaux',
+          ]
         : [
-            ..._titles.take(5),
-            if (isAdmin) ...['Administration', 'Rendez-vous'],
+            'Mon espace',
+            'Mon planning',
+            'Mon service',
+            'Ressources hospitalières',
             if (isNurse) 'Dossiers médicaux',
           ];
     final hospitalPageIndex = isPharmacist
@@ -1438,9 +1575,9 @@ class _DashboardPageState extends State<DashboardPage> {
         ? 2
         : isDoctor
         ? 5
-        : !isPatient && !isDoctor
-        ? 4
-        : -1;
+        : isAdmin
+        ? 1
+        : 3;
     final isOnHospitalPage = _selectedIndex == hospitalPageIndex;
     return Directionality(
       textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
@@ -1531,26 +1668,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
               )
             : IndexedStack(index: _selectedIndex, children: pages),
-        floatingActionButton:
-            !isPatient &&
-                _user.role != StaffRole.secretary &&
-                _selectedIndex == 3
-            ? FloatingActionButton.extended(
-                onPressed: _addHandover,
-                backgroundColor: AppColors.blue,
-                foregroundColor: Colors.white,
-                icon: const Icon(Icons.add),
-                label: const Text('Nouvelle note'),
-              )
-            : !isPatient && isAdmin && _selectedIndex == 1
-            ? FloatingActionButton.extended(
-                onPressed: _addShift,
-                backgroundColor: AppColors.blue,
-                foregroundColor: Colors.white,
-                icon: const Icon(Icons.add),
-                label: const Text('Ajouter une garde'),
-              )
-            : null,
+        floatingActionButton: _buildFloatingActionButton(isPatient, isAdmin),
         bottomNavigationBar: NavigationBar(
           selectedIndex: visibleSelectedIndex,
           labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
@@ -1820,13 +1938,6 @@ class _HomeTabState extends State<HomeTab> {
       decoration: BoxDecoration(
         color: const Color(0xFF0F2537),
         borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF0F2537).withOpacity(0.2),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1923,7 +2034,7 @@ class _HomeTabState extends State<HomeTab> {
           icon: Icons.apartment_rounded,
           iconBg: const Color(0xFFE6F4EA),
           iconColor: const Color(0xFF0F9D58),
-          targetTab: 4,
+          targetTab: 1,
         ),
         _QuickAccessItem(
           title: 'Rendez-vous',
@@ -1931,7 +2042,7 @@ class _HomeTabState extends State<HomeTab> {
           icon: Icons.event_available_rounded,
           iconBg: const Color(0xFFE8F0FE),
           iconColor: const Color(0xFF1A73E8),
-          targetTab: 6,
+          targetTab: 2,
         ),
         _QuickAccessItem(
           title: 'Admin',
@@ -1939,7 +2050,7 @@ class _HomeTabState extends State<HomeTab> {
           icon: Icons.shield_outlined,
           iconBg: const Color(0xFFF3E8FF),
           iconColor: const Color(0xFF7C3AED),
-          targetTab: 5,
+          targetTab: 3,
         ),
         _QuickAccessItem(
           title: 'Planning',
@@ -1947,7 +2058,7 @@ class _HomeTabState extends State<HomeTab> {
           icon: Icons.calendar_month_outlined,
           iconBg: const Color(0xFFE0F2FE),
           iconColor: const Color(0xFF0284C7),
-          targetTab: 1,
+          targetTab: 4,
         ),
         _QuickAccessItem(
           title: 'Services',
@@ -1955,15 +2066,15 @@ class _HomeTabState extends State<HomeTab> {
           icon: Icons.local_hospital_outlined,
           iconBg: const Color(0xFFD1FAE5),
           iconColor: const Color(0xFF059669),
-          targetTab: 2,
+          targetTab: 5,
         ),
         _QuickAccessItem(
-          title: 'Relèves',
-          subtitle: 'Transmissions',
-          icon: Icons.forum_outlined,
-          iconBg: const Color(0xFFFEF3C7),
-          iconColor: const Color(0xFFD97706),
-          targetTab: 3,
+          title: 'Dossiers',
+          subtitle: 'Dossiers médicaux',
+          icon: Icons.folder_shared_outlined,
+          iconBg: const Color(0xFFF3E8FF),
+          iconColor: const Color(0xFF7C3AED),
+          targetTab: 6,
         ),
       ]);
     } else if (isServiceHead) {
@@ -1990,14 +2101,6 @@ class _HomeTabState extends State<HomeTab> {
           icon: Icons.apartment_rounded,
           iconBg: const Color(0xFFE6F4EA),
           iconColor: const Color(0xFF0F9D58),
-          targetTab: 4,
-        ),
-        _QuickAccessItem(
-          title: 'Relèves',
-          subtitle: 'Transmissions',
-          icon: Icons.forum_outlined,
-          iconBg: const Color(0xFFFEF3C7),
-          iconColor: const Color(0xFFD97706),
           targetTab: 3,
         ),
       ]);
@@ -2009,7 +2112,7 @@ class _HomeTabState extends State<HomeTab> {
           icon: Icons.apartment_rounded,
           iconBg: const Color(0xFFE6F4EA),
           iconColor: const Color(0xFF0F9D58),
-          targetTab: 4,
+          targetTab: 3,
         ),
         _QuickAccessItem(
           title: 'Planning',
@@ -2019,32 +2122,16 @@ class _HomeTabState extends State<HomeTab> {
           iconColor: const Color(0xFF0284C7),
           targetTab: 1,
         ),
-        _QuickAccessItem(
-          title: 'Relèves',
-          subtitle: 'Transmissions',
-          icon: Icons.forum_outlined,
-          iconBg: const Color(0xFFFEF3C7),
-          iconColor: const Color(0xFFD97706),
-          targetTab: 3,
-        ),
       ]);
     } else if (isNurse) {
       items.addAll([
-        _QuickAccessItem(
-          title: 'Relèves',
-          subtitle: 'Transmissions du jour',
-          icon: Icons.forum_outlined,
-          iconBg: const Color(0xFFFEF3C7),
-          iconColor: const Color(0xFFD97706),
-          targetTab: 3,
-        ),
         _QuickAccessItem(
           title: 'Hôpital',
           subtitle: 'Lits du service',
           icon: Icons.apartment_rounded,
           iconBg: const Color(0xFFE6F4EA),
           iconColor: const Color(0xFF0F9D58),
-          targetTab: 4,
+          targetTab: 3,
         ),
         _QuickAccessItem(
           title: 'Planning',
@@ -2060,7 +2147,7 @@ class _HomeTabState extends State<HomeTab> {
           icon: Icons.folder_shared_outlined,
           iconBg: const Color(0xFFF3E8FF),
           iconColor: const Color(0xFF7C3AED),
-          targetTab: 5,
+          targetTab: 4,
         ),
       ]);
     } else {
@@ -2079,14 +2166,6 @@ class _HomeTabState extends State<HomeTab> {
           icon: Icons.apartment_rounded,
           iconBg: const Color(0xFFE6F4EA),
           iconColor: const Color(0xFF0F9D58),
-          targetTab: 4,
-        ),
-        _QuickAccessItem(
-          title: 'Relèves',
-          subtitle: 'Transmissions',
-          icon: Icons.forum_outlined,
-          iconBg: const Color(0xFFFEF3C7),
-          iconColor: const Color(0xFFD97706),
           targetTab: 3,
         ),
       ]);
@@ -2131,13 +2210,6 @@ class _HomeTabState extends State<HomeTab> {
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(18),
                       border: Border.all(color: const Color(0xFFE2E8F0)),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.02),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2351,7 +2423,9 @@ class _HomeTabState extends State<HomeTab> {
                     ),
                     const SizedBox(height: 10),
                     InkWell(
-                      onTap: () => widget.onNavigateToTab?.call(4),
+                      onTap: () => widget.onNavigateToTab?.call(
+                        widget.user.role == StaffRole.administrator ? 1 : 3,
+                      ),
                       child: const Row(
                         children: [
                           Text(
@@ -2640,13 +2714,6 @@ class _HomeTabState extends State<HomeTab> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2765,7 +2832,9 @@ class _HomeTabState extends State<HomeTab> {
     }
 
     return InkWell(
-      onTap: () => widget.onNavigateToTab?.call(4),
+      onTap: () => widget.onNavigateToTab?.call(
+        widget.user.role == StaffRole.administrator ? 1 : 3,
+      ),
       borderRadius: BorderRadius.circular(18),
       child: Container(
         padding: const EdgeInsets.all(16),
@@ -2773,13 +2842,6 @@ class _HomeTabState extends State<HomeTab> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(color: const Color(0xFFE2E8F0)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.02),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
