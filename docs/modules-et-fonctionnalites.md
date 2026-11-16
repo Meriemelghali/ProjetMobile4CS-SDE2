@@ -112,16 +112,27 @@ Fonctionnalités possibles :
 
 ### Module 7 — Dossier médical
 
-**But :** permettre à des professionnels autorisés de consulter les informations médicales d’un patient.
+**But :** permettre aux professionnels habilités de consulter et de tenir à jour le dossier médical d’un patient, et au patient de consulter le sien.
 
-Fonctionnalités possibles si l’enseignant confirme ce besoin :
+Fonctionnalités réalisées :
 
-- Rechercher un patient et consulter son dossier.
-- Consulter les antécédents, allergies, consultations et documents.
-- Restreindre chaque dossier aux professionnels habilités.
-- Tracer les accès et protéger les données.
+- Rechercher un patient (nom, e-mail), filtrer (allergie sévère, vus ce mois, dossier à créer) et ouvrir son dossier.
+- Synthèse : alertes sur les constantes hors norme, prochain contrôle, dernières constantes avec mini-courbes, allergies par sévérité, pathologies chroniques, antécédents et vaccinations.
+- Bandeau d’alerte permanent en cas d’allergie sévère.
+- Historique chronologique des consultations, ordonnances et rendez-vous.
+- Constantes vitales (tension, pouls, température, SpO₂, glycémie, poids) en graphiques avec zone normale, points hors norme et statistiques.
+- Saisie d’une consultation, de constantes (statut calculé pendant la saisie) et édition du dossier.
+- Carte d’urgence du patient retournable, avec QR code ne contenant que l’identifiant ; scan par un soignant pour ouvrir le dossier.
+- Export PDF du dossier.
 
-**Priorité :** hors MVP. Ne pas utiliser de données réelles dans le prototype étudiant. Cette fonction nécessite une validation explicite de l’enseignant et une conception de sécurité adaptée.
+| Rôle | Droits |
+| --- | --- |
+| Médecin | Lecture, consultations, constantes, édition du dossier |
+| Personnel soignant | Lecture et saisie des constantes |
+| Patient | Lecture de son propre dossier, carte d’urgence, PDF |
+| Administrateur, secrétaire, autres | Aucun accès au contenu médical |
+
+**Priorité :** extension réalisée avec des données fictives uniquement (`npm run seed:demo`, voir [comptes de test](comptes-de-test.md)). Les droits sont vérifiés par l’API.
 
 ### Module 8 — Gestion de la pharmacie
 
@@ -164,7 +175,7 @@ Fonctionnalités prévues ou envisagées :
 | Transmissions opérationnelles | Oui |  | Aucun renseignement médical identifiable. |
 | Tableau de bord | Oui |  | Résumé adapté au rôle. |
 | Rendez-vous des patients |  | Oui | À valider car le public cible changerait. |
-| Dossier médical |  | Oui | À valider ; données sensibles exclues du prototype. |
+| Dossier médical |  | Oui | Réalisé avec données fictives ; droits vérifiés par l’API. |
 | Pharmacie et stocks |  | Oui | À valider ; rôle Pharmacien à définir. |
 | Notifications |  | Oui | Nécessitent un service serveur pour les appareils. |
 
