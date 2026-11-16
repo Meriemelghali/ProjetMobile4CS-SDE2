@@ -289,9 +289,9 @@ class HospitalEquipment {
     'serialNumber': serialNumber,
     'status': status.name,
     if (lastMaintenanceAt != null)
-      'lastMaintenanceAt': lastMaintenanceAt!.toIso8601String(),
+      'lastMaintenanceAt': lastMaintenanceAt!.toUtc().toIso8601String(),
     if (maintenanceDueAt != null)
-      'maintenanceDueAt': maintenanceDueAt!.toIso8601String(),
+      'maintenanceDueAt': maintenanceDueAt!.toUtc().toIso8601String(),
     if (serviceId != null) 'serviceId': serviceId,
     if (operatingRoomId != null) 'operatingRoomId': operatingRoomId,
   };

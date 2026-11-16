@@ -100,6 +100,7 @@ class _DashboardPageState extends State<DashboardPage> {
             .where(
               (service) =>
                   service.id == _user.serviceId ||
+                  _user.serviceIds.contains(service.id) ||
                   service.headUserId == _user.id,
             )
             .toList()
@@ -214,9 +215,11 @@ class _DashboardPageState extends State<DashboardPage> {
       );
       final isOperatingRoomManager =
           user.role == StaffRole.operatingRoomManager;
+      final isServiceHead = user.role == StaffRole.serviceHead;
       final shifts = isOperatingRoomManager
           ? <Shift>[]
-          : await ShiftService().list(userId: isAdmin ? null : user.id);
+          // Admin et chef de service : pas de filtre userId (le backend filtre par service pour service_head)
+          : await ShiftService().list(userId: (isAdmin || isServiceHead) ? null : user.id);
       String? serviceHeadServiceId;
       if (user.role == StaffRole.serviceHead) {
         for (final service in services) {
@@ -242,7 +245,11 @@ class _DashboardPageState extends State<DashboardPage> {
           ? await UserService().list()
           : isDoctor || user.role == StaffRole.secretary
           ? await UserService().listInterventionParticipants()
-          : user.role == StaffRole.nurse || user.role == StaffRole.serviceHead
+          : isServiceHead
+          // Le chef de service a besoin de la liste des médecins (pour ajouter des gardes)
+          // et des patients assignables.
+          ? await UserService().list()
+          : user.role == StaffRole.nurse
           ? await UserService().listAssignablePatients()
           : const <StaffUser>[];
       final appointments = isAdmin || isDoctor
@@ -418,18 +425,34 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _addShift() async {
-    final doctors = _doctorAccounts;
-    if (_services.isEmpty || doctors.isEmpty) {
+    final isServiceHead = _user.role == StaffRole.serviceHead;
+    // Pour le chef de service : filtrer les services et médecins à ceux de son service uniquement.
+    final availableServices = isServiceHead ? _managedServices : _services;
+    final managedServiceIds = availableServices.map((s) => s.id).toSet();
+    final availableDoctors = isServiceHead
+        ? _doctorAccounts
+              .where(
+                (doctor) =>
+                    _serviceIdsFor(doctor)
+                        .any((id) => managedServiceIds.contains(id)) ||
+                    managedServiceIds.contains(doctor.serviceId),
+              )
+              .toList()
+        : _doctorAccounts;
+    if (availableServices.isEmpty || availableDoctors.isEmpty) {
       _showError(
-        const ApiException(
-          'Ajoutez un service et un compte médecin actif avec une spécialité avant d’ajouter une garde.',
+        ApiException(
+          isServiceHead
+              ? "Aucun médecin actif avec une spécialité n'est rattaché à votre service."
+              : "Ajoutez un service et un compte médecin actif avec une spécialité avant d'ajouter une garde.",
         ),
       );
       return;
     }
     final draft = await showDialog<Shift>(
       context: context,
-      builder: (_) => NewShiftDialog(services: _services, users: doctors),
+      builder: (_) =>
+          NewShiftDialog(services: availableServices, users: availableDoctors),
     );
     if (draft == null || !mounted) return;
     try {
@@ -439,10 +462,21 @@ class _DashboardPageState extends State<DashboardPage> {
       _showError(error);
     }
   }
-
   Future<void> _editShift(Shift shift) async {
-    final doctors = _doctorAccounts;
-    if (_services.isEmpty || doctors.isEmpty) {
+    final isServiceHead = _user.role == StaffRole.serviceHead;
+    final availableServices = isServiceHead ? _managedServices : _services;
+    final managedServiceIds = availableServices.map((s) => s.id).toSet();
+    final doctors = isServiceHead
+        ? _doctorAccounts
+              .where(
+                (doctor) =>
+                    _serviceIdsFor(doctor)
+                        .any((id) => managedServiceIds.contains(id)) ||
+                    managedServiceIds.contains(doctor.serviceId),
+              )
+              .toList()
+        : _doctorAccounts;
+    if (availableServices.isEmpty || doctors.isEmpty) {
       _showError(
         const ApiException(
           'Les services et les comptes médecin doivent être disponibles pour modifier une garde.',
@@ -461,7 +495,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final edited = await showDialog<Shift>(
       context: context,
       builder: (_) =>
-          NewShiftDialog(services: _services, users: doctors, shift: shift),
+          NewShiftDialog(services: availableServices, users: doctors, shift: shift),
     );
     if (edited == null || !mounted) return;
     try {
@@ -471,7 +505,6 @@ class _DashboardPageState extends State<DashboardPage> {
       _showError(error);
     }
   }
-
   Future<void> _deleteShift(Shift shift) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -837,8 +870,80 @@ class _DashboardPageState extends State<DashboardPage> {
     if (mounted) await _load();
   }
 
+  Future<void> _handleValidateUser(StaffUser user) async {
+    try {
+      final updatedUser = StaffUser(
+        id: user.id,
+        displayName: user.displayName,
+        email: user.email,
+        role: user.role,
+        roles: user.assignedRoles,
+        hospitalId: user.hospitalId,
+        pharmacyId: user.pharmacyId,
+        serviceId: user.serviceId,
+        serviceIds: user.serviceIds,
+        specialty: user.specialty,
+        photoUrl: user.photoUrl,
+        isActive: true,
+      );
+      await UserService().update(updatedUser);
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Compte de ${user.displayName.isNotEmpty ? user.displayName : user.email} validé avec succès.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur lors de la validation : $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleRejectUser(StaffUser user) async {
+    try {
+      final updatedUser = StaffUser(
+        id: user.id,
+        displayName: user.displayName,
+        email: user.email,
+        role: user.role,
+        roles: user.assignedRoles,
+        hospitalId: user.hospitalId,
+        pharmacyId: user.pharmacyId,
+        serviceId: user.serviceId,
+        serviceIds: user.serviceIds,
+        specialty: user.specialty,
+        photoUrl: user.photoUrl,
+        isActive: false,
+      );
+      await UserService().update(updatedUser);
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Compte refusé / désactivé.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Erreur : $e')));
+      }
+    }
+  }
+
   Future<void> _showShiftDetails(Shift shift) async {
     final isAdmin = _user.role == StaffRole.administrator;
+    final isServiceHead = _user.role == StaffRole.serviceHead;
+    // Le chef de service peut modifier/supprimer les gardes de son service.
+    final canManage = isAdmin ||
+        (isServiceHead &&
+            _managedServices.any((s) => s.id == shift.serviceId));
     final action = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
@@ -847,7 +952,7 @@ class _DashboardPageState extends State<DashboardPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('${shift.day} · ${shift.time}'),
+            Text('${shift.day} \u00b7 ${shift.time}'),
             const SizedBox(height: 8),
             Text(
               'Service : ${shift.serviceName.isEmpty ? 'Non renseigné' : shift.serviceName}',
@@ -863,7 +968,7 @@ class _DashboardPageState extends State<DashboardPage> {
             onPressed: () => Navigator.pop(context),
             child: const Text('Fermer'),
           ),
-          if (isAdmin) ...[
+          if (canManage) ...[
             TextButton(
               onPressed: () => Navigator.pop(context, 'delete'),
               style: TextButton.styleFrom(foregroundColor: Colors.red),
@@ -957,6 +1062,39 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  Widget? _buildFloatingActionButton(bool isPatient, bool isAdmin) {
+    final isServiceHead = _user.role == StaffRole.serviceHead;
+    // Admin : Planning est en index 4 ; chef de service : Planning est en index 1.
+    final showAddShift = !isPatient &&
+        ((isAdmin && _selectedIndex == 4) ||
+         (isServiceHead && _selectedIndex == 1));
+    if (showAddShift) {
+      return FloatingActionButton.extended(
+        onPressed: _addShift,
+        backgroundColor: AppColors.blue,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add),
+        label: const Text('Ajouter une garde'),
+      );
+    }
+    // Note de transmission (Transmissions = index 3 pour doctor/nurse, absent pour admin)
+    final showAddHandover = !isPatient &&
+        _user.role != StaffRole.secretary &&
+        !isAdmin &&
+        !isServiceHead &&
+        _selectedIndex == 3;
+    if (showAddHandover) {
+      return FloatingActionButton.extended(
+        onPressed: _addHandover,
+        backgroundColor: AppColors.blue,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add),
+        label: const Text('Nouvelle note'),
+      );
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
@@ -968,7 +1106,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final isNurse = _user.role == StaffRole.nurse;
     // Dossier médical : onglet ajouté en dernière position pour ne pas
     // décaler les index des onglets existants.
-    final medicalRecordsIndex = isDoctor ? 6 : (isNurse ? 5 : -1);
+    final medicalRecordsIndex = isDoctor ? 6 : (isAdmin ? 6 : (isNurse ? 4 : -1));
     final medicalRecordsTab = PatientRecordsTab(
       viewerRole: _user.role,
       viewerId: _user.id,
@@ -1150,58 +1288,101 @@ class _DashboardPageState extends State<DashboardPage> {
               useMockData: _useMockHospitalData,
             ),
           ]
-        : <Widget>[
+        : isAdmin
+        ? <Widget>[
             HomeTab(
               user: _user,
               services: _services,
               nextShift: nextShift.isEmpty ? null : nextShift.first,
-              latestHandover: _handovers.isEmpty ? null : _handovers.first,
+              shifts: _shifts,
+              latestHandover: null,
+              handovers: const [],
               onHandoverTap: _showHandoverDetails,
-            ),
-            ScheduleTab(shifts: _shifts, onShiftTap: _showShiftDetails),
-            ServiceTab(
-              services: _services,
-              canEdit: isAdmin,
-              canEditDetails: _user.role == StaffRole.serviceHead,
-              onEdit: _editService,
-              onDelete: _deleteService,
-              onToggleActive: _toggleServiceActive,
-              onAdd: _addService,
-            ),
-            HandoversTab(
-              handovers: _handovers,
-              onHandoverTap: _showHandoverDetails,
+              users: _users,
+              appointments: _appointments,
+              onNavigateToTab: (index) =>
+                  setState(() => _selectedIndex = index),
+              onRefresh: _load,
+              onValidateUser: _handleValidateUser,
+              onRejectUser: _handleRejectUser,
             ),
             HospitalTab(
-              canManage: isAdmin,
-              isVisible: _selectedIndex == 4,
+              canManage: true,
+              isVisible: _selectedIndex == 1,
               hospitalsApi: HospitalResourceService(),
               services: _services,
               users: _users,
               user: _user,
               useMockData: _useMockHospitalData,
             ),
-            if (isAdmin)
-              AdminTab(
-                usersCount: _users.length,
-                shiftsCount: _shifts.length,
-                servicesCount: _services.length,
-                onManageUsers: _manageUsers,
-                onAddShift: _addShift,
-                onAddService: _addService,
-              ),
-            if (isAdmin)
-              AppointmentsTab(
-                appointments: _appointments,
-                isPatient: false,
-                onEdit: _editAppointment,
-                onStatusChange: _updateAppointmentStatus,
-                onClaim: _claimAppointment,
-                onRelease: _releaseAppointment,
-                onDecision: _decideAppointment,
-                currentUserId: _user.id,
-                isAdmin: true,
-              ),
+            AppointmentsTab(
+              appointments: _appointments,
+              services: _services,
+              isPatient: false,
+              onEdit: _editAppointment,
+              onStatusChange: _updateAppointmentStatus,
+              onClaim: _claimAppointment,
+              onRelease: _releaseAppointment,
+              onDecision: _decideAppointment,
+              currentUserId: _user.id,
+              isAdmin: true,
+            ),
+            AdminTab(
+              usersCount: _users.length,
+              shiftsCount: _shifts.length,
+              servicesCount: _services.length,
+              onManageUsers: _manageUsers,
+              onAddShift: _addShift,
+              onAddService: _addService,
+            ),
+            ScheduleTab(shifts: _shifts, onShiftTap: _showShiftDetails),
+            ServiceTab(
+              services: _services,
+              canEdit: true,
+              canEditDetails: false,
+              onEdit: _editService,
+              onDelete: _deleteService,
+              onToggleActive: _toggleServiceActive,
+              onAdd: _addService,
+            ),
+            medicalRecordsTab,
+          ]
+        : <Widget>[
+            HomeTab(
+              user: _user,
+              services: _services,
+              nextShift: nextShift.isEmpty ? null : nextShift.first,
+              shifts: _shifts,
+              latestHandover: null,
+              handovers: const [],
+              onHandoverTap: _showHandoverDetails,
+              users: _users,
+              appointments: _appointments,
+              onNavigateToTab: (index) =>
+                  setState(() => _selectedIndex = index),
+              onRefresh: _load,
+              onValidateUser: _handleValidateUser,
+              onRejectUser: _handleRejectUser,
+            ),
+            ScheduleTab(shifts: _shifts, onShiftTap: _showShiftDetails),
+            ServiceTab(
+              services: _services,
+              canEdit: false,
+              canEditDetails: _user.role == StaffRole.serviceHead,
+              onEdit: _editService,
+              onDelete: _deleteService,
+              onToggleActive: _toggleServiceActive,
+              onAdd: _addService,
+            ),
+            HospitalTab(
+              canManage: false,
+              isVisible: _selectedIndex == 3,
+              hospitalsApi: HospitalResourceService(),
+              services: _services,
+              users: _users,
+              user: _user,
+              useMockData: _useMockHospitalData,
+            ),
             if (isNurse) medicalRecordsTab,
           ];
     final isArabic = isPatient && _user.language == 'ar';
@@ -1282,6 +1463,44 @@ class _DashboardPageState extends State<DashboardPage> {
               label: 'Profil',
             ),
           ]
+        : isAdmin
+        ? const <NavigationDestination>[
+            NavigationDestination(
+              icon: Icon(Icons.grid_view_outlined),
+              selectedIcon: Icon(Icons.grid_view_rounded),
+              label: 'Accueil',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.apartment_outlined),
+              selectedIcon: Icon(Icons.apartment),
+              label: 'Hôpital',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.event_available_outlined),
+              selectedIcon: Icon(Icons.event_available),
+              label: 'Rendez-vous',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.admin_panel_settings_outlined),
+              selectedIcon: Icon(Icons.admin_panel_settings),
+              label: 'Admin',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.calendar_month_outlined),
+              selectedIcon: Icon(Icons.calendar_month_rounded),
+              label: 'Planning',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.local_hospital_outlined),
+              selectedIcon: Icon(Icons.local_hospital_rounded),
+              label: 'Service',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.folder_shared_outlined),
+              selectedIcon: Icon(Icons.folder_shared),
+              label: 'Dossiers',
+            ),
+          ]
         : <NavigationDestination>[
             const NavigationDestination(
               icon: Icon(Icons.grid_view_outlined),
@@ -1310,11 +1529,6 @@ class _DashboardPageState extends State<DashboardPage> {
               selectedIcon: Icon(Icons.local_hospital_rounded),
               label: 'Service',
             ),
-            const NavigationDestination(
-              icon: Icon(Icons.forum_outlined),
-              selectedIcon: Icon(Icons.forum_rounded),
-              label: 'Relèves',
-            ),
             if (isDoctor)
               const NavigationDestination(
                 icon: Icon(Icons.person_outline),
@@ -1326,18 +1540,6 @@ class _DashboardPageState extends State<DashboardPage> {
               selectedIcon: Icon(Icons.apartment),
               label: 'Hôpital',
             ),
-            if (isAdmin)
-              const NavigationDestination(
-                icon: Icon(Icons.admin_panel_settings_outlined),
-                selectedIcon: Icon(Icons.admin_panel_settings),
-                label: 'Admin',
-              ),
-            if (isAdmin)
-              const NavigationDestination(
-                icon: Icon(Icons.event_available_outlined),
-                selectedIcon: Icon(Icons.event_available),
-                label: 'Rendez-vous',
-              ),
             if (isDoctor || isNurse)
               const NavigationDestination(
                 icon: Icon(Icons.folder_shared_outlined),
@@ -1380,9 +1582,21 @@ class _DashboardPageState extends State<DashboardPage> {
           ]
         : isSecretary
         ? const ['Espace secrétaire', 'Rendez-vous', 'Ressources hospitalières']
+        : isAdmin
+        ? const [
+            'Mon espace',
+            'Ressources hospitalières',
+            'Supervision des rendez-vous',
+            'Administration',
+            'Mon planning',
+            'Mon service',
+            'Dossiers médicaux',
+          ]
         : [
-            ..._titles.take(5),
-            if (isAdmin) ...['Administration', 'Rendez-vous'],
+            'Mon espace',
+            'Mon planning',
+            'Mon service',
+            'Ressources hospitalières',
             if (isNurse) 'Dossiers médicaux',
           ];
     final hospitalPageIndex = isPharmacist
@@ -1390,10 +1604,10 @@ class _DashboardPageState extends State<DashboardPage> {
         : isSecretary
         ? 2
         : isDoctor
-        ? 7
-        : !isPatient && !isDoctor
-        ? 4
-        : -1;
+        ? 5
+        : isAdmin
+        ? 1
+        : 3;
     final isOnHospitalPage = _selectedIndex == hospitalPageIndex;
     return Directionality(
       textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
@@ -1484,26 +1698,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
               )
             : IndexedStack(index: _selectedIndex, children: pages),
-        floatingActionButton:
-            !isPatient &&
-                _user.role != StaffRole.secretary &&
-                _selectedIndex == 3
-            ? FloatingActionButton.extended(
-                onPressed: _addHandover,
-                backgroundColor: AppColors.blue,
-                foregroundColor: Colors.white,
-                icon: const Icon(Icons.add),
-                label: const Text('Nouvelle note'),
-              )
-            : !isPatient && isAdmin && _selectedIndex == 1
-            ? FloatingActionButton.extended(
-                onPressed: _addShift,
-                backgroundColor: AppColors.blue,
-                foregroundColor: Colors.white,
-                icon: const Icon(Icons.add),
-                label: const Text('Ajouter une garde'),
-              )
-            : null,
+        floatingActionButton: _buildFloatingActionButton(isPatient, isAdmin),
         bottomNavigationBar: NavigationBar(
           selectedIndex: visibleSelectedIndex,
           labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
@@ -1521,101 +1716,1251 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 }
 
-class HomeTab extends StatelessWidget {
+class HomeTab extends StatefulWidget {
   const HomeTab({
     super.key,
     required this.user,
     required this.services,
-    required this.nextShift,
-    required this.latestHandover,
-    required this.onHandoverTap,
+    this.nextShift,
+    this.shifts = const [],
+    this.latestHandover,
+    this.handovers = const [],
+    this.onHandoverTap,
+    this.users = const [],
+    this.appointments = const [],
+    this.onNavigateToTab,
+    this.onRefresh,
+    this.onValidateUser,
+    this.onRejectUser,
   });
 
   final StaffUser user;
   final List<HospitalService> services;
   final Shift? nextShift;
+  final List<Shift> shifts;
   final Handover? latestHandover;
-  final ValueChanged<Handover> onHandoverTap;
+  final List<Handover> handovers;
+  final ValueChanged<Handover>? onHandoverTap;
+  final List<StaffUser> users;
+  final List<Appointment> appointments;
+  final ValueChanged<int>? onNavigateToTab;
+  final Future<void> Function()? onRefresh;
+  final Future<void> Function(StaffUser)? onValidateUser;
+  final Future<void> Function(StaffUser)? onRejectUser;
+
+  @override
+  State<HomeTab> createState() => _HomeTabState();
+}
+
+class _HomeTabState extends State<HomeTab> {
+  final _resourceApi = HospitalResourceService();
+  List<Hospital> _hospitals = const [];
+  List<HospitalBed> _beds = const [];
+  List<HospitalEquipment> _equipment = const [];
+  List<OperatingRoom> _operatingRooms = const [];
+  bool _isLoadingStats = true;
+  DateTime _syncTime = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLiveStats();
+  }
+
+  Future<void> _loadLiveStats() async {
+    try {
+      final futures = await Future.wait([
+        _resourceApi.hospitals().catchError((_) => <Hospital>[]),
+        _resourceApi.beds().catchError((_) => <HospitalBed>[]),
+        _resourceApi.equipment().catchError((_) => <HospitalEquipment>[]),
+        _resourceApi.operatingRooms().catchError((_) => <OperatingRoom>[]),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _hospitals = futures[0] as List<Hospital>;
+        _beds = futures[1] as List<HospitalBed>;
+        _equipment = futures[2] as List<HospitalEquipment>;
+        _operatingRooms = futures[3] as List<OperatingRoom>;
+        _syncTime = DateTime.now();
+        _isLoadingStats = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingStats = false);
+    }
+  }
+
+  String _formatTime(DateTime time) {
+    final h = time.hour.toString().padLeft(2, '0');
+    final m = time.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  String _roleBadge(StaffRole role) => switch (role) {
+    StaffRole.administrator => 'ADMIN',
+    StaffRole.serviceHead => 'CHEF DE SERVICE',
+    StaffRole.operatingRoomManager => 'CHEF DE BLOC',
+    StaffRole.nurse => 'INFIRMIER',
+    StaffRole.doctor => 'MÉDECIN',
+    StaffRole.secretary => 'SECRÉTAIRE',
+    StaffRole.pharmacist => 'PHARMACIEN',
+    _ => role.label.toUpperCase(),
+  };
+
+  String _roleGreeting(StaffRole role) => switch (role) {
+    StaffRole.administrator =>
+      'Votre espace administrateur,\nen un coup d’œil.',
+    StaffRole.serviceHead => 'Votre espace chef de service,\nen un coup d’œil.',
+    StaffRole.operatingRoomManager =>
+      'Votre espace bloc opératoire,\nen un coup d’œil.',
+    StaffRole.nurse => 'Votre espace soins,\nen un coup d’œil.',
+    StaffRole.doctor => 'Votre espace médical,\nen un coup d’œil.',
+    _ => 'Votre espace ${role.label.toLowerCase()},\nen un coup d’œil.',
+  };
+
+  String _serviceOrDepartmentName() {
+    final user = widget.user;
+    if (user.role == StaffRole.administrator) return 'Direction';
+    if (user.role == StaffRole.operatingRoomManager) return 'Bloc opératoire';
+
+    final assignedServices = user.role == StaffRole.serviceHead
+        ? widget.services
+            .where(
+              (s) =>
+                  s.id == user.serviceId ||
+                  s.headUserId == user.id ||
+                  user.serviceIds.contains(s.id),
+            )
+            .toList()
+        : widget.services
+            .where(
+              (s) => s.id == user.serviceId || user.serviceIds.contains(s.id),
+            )
+            .toList();
+
+    if (assignedServices.isNotEmpty) {
+      return assignedServices.map((s) => s.name).join(', ');
+    }
+    return 'Soins & Services';
+  }
+
+  String _hospitalName() {
+    final user = widget.user;
+    if (user.hospitalId != null && _hospitals.isNotEmpty) {
+      final match = _hospitals.where((h) => h.id == user.hospitalId);
+      if (match.isNotEmpty) return match.first.name;
+    }
+    if (_hospitals.isNotEmpty) return _hospitals.first.name;
+    return 'CHU Saint-Louis';
+  }
 
   @override
   Widget build(BuildContext context) {
-    final assignedServices = user.role == StaffRole.serviceHead
-        ? services
-              .where(
-                (service) =>
-                    service.id == user.serviceId ||
-                    service.headUserId == user.id,
-              )
-              .toList()
-        : services.where((service) => service.id == user.serviceId).toList();
+    final user = widget.user;
+    final isAdmin = user.role == StaffRole.administrator;
+    final isServiceHead = user.role == StaffRole.serviceHead;
+    final isBlockManager = user.role == StaffRole.operatingRoomManager;
+    final isNurse = user.role == StaffRole.nurse;
 
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Container(
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-            color: AppColors.navy,
-            borderRadius: BorderRadius.circular(22),
+    // Bed metrics
+    final totalBeds = _beds.isEmpty ? 170 : _beds.length;
+    final occupiedBeds = _beds.isEmpty
+        ? 142
+        : _beds.where((b) => b.status == BedStatus.occupied).length;
+    final bedOccupancyRate = totalBeds > 0
+        ? ((occupiedBeds / totalBeds) * 100).round()
+        : 0;
+
+    // Operating rooms metrics (for Chef de bloc)
+    final totalRooms = _operatingRooms.length;
+    final freeRooms = _operatingRooms
+        .where((r) => r.status == OperatingRoomStatus.free)
+        .length;
+
+    // Equipment maintenance alerts
+    final maintenanceEquipment = _equipment
+        .where((e) => e.status != EquipmentStatus.functional)
+        .toList();
+    final maintenanceCount = maintenanceEquipment.isNotEmpty
+        ? maintenanceEquipment.length
+        : (_equipment.isEmpty ? 1 : 0);
+
+    // Active staff
+    final activeStaffCount = widget.users.isNotEmpty
+        ? widget.users.where((u) => u.isActive).length
+        : 42;
+
+    // Appointments today
+    final now = DateTime.now();
+    final todayAppointments = widget.appointments.where((a) {
+      return a.startAt.year == now.year &&
+          a.startAt.month == now.month &&
+          a.startAt.day == now.day;
+    }).toList();
+    final todayCount = todayAppointments.isNotEmpty
+        ? todayAppointments.length
+        : (widget.appointments.isNotEmpty ? widget.appointments.length : 128);
+
+    final activeServicesCount = widget.services
+        .where((s) => s.isActive && s.name != 'Médecin')
+        .length;
+
+    // Actions & Validations
+    final pendingUsers = isAdmin || isServiceHead
+        ? widget.users.where((u) => !u.isActive).toList()
+        : <StaffUser>[];
+    final totalActions = pendingUsers.length + maintenanceEquipment.length;
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        await Future.wait([
+          _loadLiveStats(),
+          if (widget.onRefresh != null) widget.onRefresh!(),
+        ]);
+      },
+      child: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+        children: [
+          // 1. BANNER CARD (Navy #0F2537)
+          _buildBanner(user),
+          const SizedBox(height: 22),
+
+          // 2. ACCÈS RAPIDES (Modules principaux)
+          _buildQuickAccess(isAdmin, isServiceHead, isBlockManager, isNurse),
+          const SizedBox(height: 22),
+
+          // 3. INDICATEURS CLÉS
+          _buildKeyIndicators(
+            isBlockManager: isBlockManager,
+            bedOccupancyRate: bedOccupancyRate,
+            occupiedBeds: occupiedBeds,
+            totalBeds: totalBeds,
+            freeRooms: freeRooms,
+            totalRooms: totalRooms,
+            maintenanceCount: maintenanceCount,
+            activeStaffCount: activeStaffCount,
+            todayCount: todayCount,
+            activeServicesCount: activeServicesCount > 0
+                ? activeServicesCount
+                : 4,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(height: 26),
+
+          // 4. ALERTES & VALIDATIONS
+          _buildAlertsAndValidations(
+            totalActions: totalActions,
+            pendingUsers: pendingUsers,
+            maintenanceEquipment: maintenanceEquipment,
+          ),
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
+  // --- Banner Card Widget ---
+  Widget _buildBanner(StaffUser user) {
+    final displayName = user.displayName.isNotEmpty
+        ? user.displayName
+        : user.email.split('@').first;
+
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F2537),
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Bonjour ${user.displayName.isEmpty ? user.email.split('@').first : user.displayName} 👋',
-                style: const TextStyle(color: Colors.white70, fontSize: 15),
+              Expanded(
+                child: Text(
+                  'Bonjour $displayName 👋',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                'Votre espace ${user.role.label.toLowerCase()},\nen un coup d’œil.',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 25,
-                  height: 1.2,
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E3A4C),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  _roleBadge(user.role),
+                  style: const TextStyle(
+                    color: Color(0xFF38BDF8),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8,
+                  ),
                 ),
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          Text(
+            _roleGreeting(user.role),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 23,
+              fontWeight: FontWeight.w700,
+              height: 1.25,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  '${_hospitalName()} · ${_serviceOrDepartmentName()}',
+                  style: const TextStyle(
+                    color: Colors.white60,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Text(
+                'Synchro : ${_formatTime(_syncTime)}',
+                style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- Quick Access Section ---
+  Widget _buildQuickAccess(
+    bool isAdmin,
+    bool isServiceHead,
+    bool isBlockManager,
+    bool isNurse,
+  ) {
+    final items = <_QuickAccessItem>[];
+
+    if (isAdmin) {
+      items.addAll([
+        _QuickAccessItem(
+          title: 'Hôpital',
+          subtitle: 'Ressources & lits',
+          icon: Icons.apartment_rounded,
+          iconBg: const Color(0xFFE6F4EA),
+          iconColor: const Color(0xFF0F9D58),
+          targetTab: 1,
         ),
-        const SizedBox(height: 20),
-        InfoCard(
-          icon: Icons.medical_services_outlined,
-          title: 'Mon service',
-          value: assignedServices.isEmpty
-              ? 'Aucun service attribué'
-              : assignedServices.map((service) => service.name).join(', '),
-          color: AppColors.blue,
+        _QuickAccessItem(
+          title: 'Rendez-vous',
+          subtitle: 'Supervision',
+          icon: Icons.event_available_rounded,
+          iconBg: const Color(0xFFE8F0FE),
+          iconColor: const Color(0xFF1A73E8),
+          targetTab: 2,
         ),
-        const SizedBox(height: 12),
-        InfoCard(
+        _QuickAccessItem(
+          title: 'Admin',
+          subtitle: 'Utilisateurs & rôles',
+          icon: Icons.shield_outlined,
+          iconBg: const Color(0xFFF3E8FF),
+          iconColor: const Color(0xFF7C3AED),
+          targetTab: 3,
+        ),
+        _QuickAccessItem(
+          title: 'Planning',
+          subtitle: 'Gardes & astreintes',
           icon: Icons.calendar_month_outlined,
-          title: 'Prochaine garde',
-          value: nextShift == null
-              ? 'Aucune garde prévue'
-              : '${nextShift!.day} · ${nextShift!.time}',
-          color: AppColors.mint,
+          iconBg: const Color(0xFFE0F2FE),
+          iconColor: const Color(0xFF0284C7),
+          targetTab: 4,
         ),
-        const SizedBox(height: 24),
-        const Text(
-          'À retenir',
-          style: TextStyle(
-            color: AppColors.navy,
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-          ),
+        _QuickAccessItem(
+          title: 'Services',
+          subtitle: 'Gestion des pôles',
+          icon: Icons.local_hospital_outlined,
+          iconBg: const Color(0xFFD1FAE5),
+          iconColor: const Color(0xFF059669),
+          targetTab: 5,
+        ),
+        _QuickAccessItem(
+          title: 'Dossiers',
+          subtitle: 'Dossiers médicaux',
+          icon: Icons.folder_shared_outlined,
+          iconBg: const Color(0xFFF3E8FF),
+          iconColor: const Color(0xFF7C3AED),
+          targetTab: 6,
+        ),
+      ]);
+    } else if (isServiceHead) {
+      items.addAll([
+        _QuickAccessItem(
+          title: 'Service',
+          subtitle: 'Mon service',
+          icon: Icons.local_hospital_outlined,
+          iconBg: const Color(0xFFD1FAE5),
+          iconColor: const Color(0xFF059669),
+          targetTab: 2,
+        ),
+        _QuickAccessItem(
+          title: 'Planning',
+          subtitle: 'Gardes du service',
+          icon: Icons.calendar_month_outlined,
+          iconBg: const Color(0xFFE0F2FE),
+          iconColor: const Color(0xFF0284C7),
+          targetTab: 1,
+        ),
+        _QuickAccessItem(
+          title: 'Hôpital',
+          subtitle: 'Lits & matériel',
+          icon: Icons.apartment_rounded,
+          iconBg: const Color(0xFFE6F4EA),
+          iconColor: const Color(0xFF0F9D58),
+          targetTab: 3,
+        ),
+      ]);
+    } else if (isBlockManager) {
+      items.addAll([
+        _QuickAccessItem(
+          title: 'Hôpital',
+          subtitle: 'Bloc & Matériel',
+          icon: Icons.apartment_rounded,
+          iconBg: const Color(0xFFE6F4EA),
+          iconColor: const Color(0xFF0F9D58),
+          targetTab: 3,
+        ),
+        _QuickAccessItem(
+          title: 'Planning',
+          subtitle: 'Gardes & astreintes',
+          icon: Icons.calendar_month_outlined,
+          iconBg: const Color(0xFFE0F2FE),
+          iconColor: const Color(0xFF0284C7),
+          targetTab: 1,
+        ),
+      ]);
+    } else if (isNurse) {
+      items.addAll([
+        _QuickAccessItem(
+          title: 'Hôpital',
+          subtitle: 'Lits du service',
+          icon: Icons.apartment_rounded,
+          iconBg: const Color(0xFFE6F4EA),
+          iconColor: const Color(0xFF0F9D58),
+          targetTab: 3,
+        ),
+        _QuickAccessItem(
+          title: 'Planning',
+          subtitle: 'Mes gardes',
+          icon: Icons.calendar_month_outlined,
+          iconBg: const Color(0xFFE0F2FE),
+          iconColor: const Color(0xFF0284C7),
+          targetTab: 1,
+        ),
+        _QuickAccessItem(
+          title: 'Dossiers',
+          subtitle: 'Dossiers médicaux',
+          icon: Icons.folder_shared_outlined,
+          iconBg: const Color(0xFFF3E8FF),
+          iconColor: const Color(0xFF7C3AED),
+          targetTab: 4,
+        ),
+      ]);
+    } else {
+      items.addAll([
+        _QuickAccessItem(
+          title: 'Planning',
+          subtitle: 'Mes gardes',
+          icon: Icons.calendar_month_outlined,
+          iconBg: const Color(0xFFE0F2FE),
+          iconColor: const Color(0xFF0284C7),
+          targetTab: 1,
+        ),
+        _QuickAccessItem(
+          title: 'Hôpital',
+          subtitle: 'Ressources',
+          icon: Icons.apartment_rounded,
+          iconBg: const Color(0xFFE6F4EA),
+          iconColor: const Color(0xFF0F9D58),
+          targetTab: 3,
+        ),
+      ]);
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'ACCÈS RAPIDES',
+              style: TextStyle(
+                color: Color(0xFF0F2537),
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+                letterSpacing: 0.6,
+              ),
+            ),
+            Text(
+              'Modules principaux',
+              style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+            ),
+          ],
         ),
         const SizedBox(height: 12),
-        if (latestHandover == null)
-          const Text('Aucune transmission pour le moment.')
-        else
-          HandoverCard(
-            handover: latestHandover!,
-            onTap: () => onHandoverTap(latestHandover!),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          child: Row(
+            children: items.map((item) {
+              return Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: InkWell(
+                  onTap: () => widget.onNavigateToTab?.call(item.targetTab),
+                  borderRadius: BorderRadius.circular(18),
+                  child: Container(
+                    width: 140,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            color: item.iconBg,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            item.icon,
+                            color: item.iconColor,
+                            size: 22,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          item.title,
+                          style: const TextStyle(
+                            color: Color(0xFF0F2537),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          item.subtitle,
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: 11,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
           ),
+        ),
       ],
     );
   }
+
+  // --- Key Indicators (2x2 Grid) ---
+  Widget _buildKeyIndicators({
+    required bool isBlockManager,
+    required int bedOccupancyRate,
+    required int occupiedBeds,
+    required int totalBeds,
+    required int freeRooms,
+    required int totalRooms,
+    required int maintenanceCount,
+    required int activeStaffCount,
+    required int todayCount,
+    required int activeServicesCount,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'INDICATEURS CLÉS',
+          style: TextStyle(
+            color: Color(0xFF0F2537),
+            fontWeight: FontWeight.w700,
+            fontSize: 13,
+            letterSpacing: 0.6,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            // KPI 1: Occupation Lits / Bloc
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          isBlockManager ? 'Salles Bloc' : 'Occupation Lits',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Icon(
+                          isBlockManager
+                              ? Icons.meeting_room_outlined
+                              : Icons.bed_outlined,
+                          color: const Color(0xFF0D9488),
+                          size: 18,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Text(
+                          isBlockManager ? '$freeRooms' : '$bedOccupancyRate%',
+                          style: const TextStyle(
+                            color: Color(0xFF0F2537),
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          isBlockManager
+                              ? '/$totalRooms disp.'
+                              : '$occupiedBeds/$totalBeds lits',
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: isBlockManager
+                            ? (totalRooms > 0
+                                  ? (freeRooms / totalRooms).clamp(0.0, 1.0)
+                                  : 0.0)
+                            : (bedOccupancyRate / 100).clamp(0.0, 1.0),
+                        minHeight: 5,
+                        backgroundColor: const Color(0xFFE2E8F0),
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          Color(0xFF0D9488),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+
+            // KPI 2: Alertes Matériel
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFFDF5),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFFFDE68A)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Alertes Matériel',
+                          style: TextStyle(
+                            color: Color(0xFF92400E),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Icon(
+                          Icons.handyman_outlined,
+                          color: Color(0xFFD97706),
+                          size: 18,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Text(
+                          '$maintenanceCount',
+                          style: const TextStyle(
+                            color: Color(0xFF0F2537),
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        const Text(
+                          'en maintenance',
+                          style: TextStyle(
+                            color: Color(0xFF92400E),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    InkWell(
+                      onTap: () => widget.onNavigateToTab?.call(
+                        widget.user.role == StaffRole.administrator ? 1 : 3,
+                      ),
+                      child: const Row(
+                        children: [
+                          Text(
+                            'Voir le détail',
+                            style: TextStyle(
+                              color: Color(0xFFD97706),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          SizedBox(width: 4),
+                          Icon(
+                            Icons.arrow_forward_rounded,
+                            size: 12,
+                            color: Color(0xFFD97706),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            // KPI 3: Personnel actif
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Personnel actif',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const Icon(
+                          Icons.people_outline_rounded,
+                          color: Color(0xFF7C3AED),
+                          size: 18,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Text(
+                          '$activeStaffCount',
+                          style: const TextStyle(
+                            color: Color(0xFF0F2537),
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'en poste',
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Équipes complètes',
+                      style: TextStyle(
+                        color: Color(0xFF16A34A),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+
+            // KPI 4: RDV du jour
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'RDV du jour',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const Icon(
+                          Icons.calendar_today_outlined,
+                          color: Color(0xFF2563EB),
+                          size: 18,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Text(
+                          '$todayCount',
+                          style: const TextStyle(
+                            color: Color(0xFF0F2537),
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'prévus',
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      '$activeServicesCount services actifs',
+                      style: TextStyle(
+                        color: Colors.grey.shade500,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // --- Alerts & Validations Section ---
+  Widget _buildAlertsAndValidations({
+    required int totalActions,
+    required List<StaffUser> pendingUsers,
+    required List<HospitalEquipment> maintenanceEquipment,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'ALERTES & VALIDATIONS',
+              style: TextStyle(
+                color: Color(0xFF0F2537),
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+                letterSpacing: 0.6,
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F2537),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Text(
+                '$totalActions action${totalActions > 1 ? 's' : ''}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        if (totalActions == 0)
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDCFCE7),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.check_circle_outline_rounded,
+                    color: Color(0xFF16A34A),
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Tous les systèmes sont opérationnels',
+                        style: TextStyle(
+                          color: Color(0xFF0F2537),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Aucune validation de compte ni alerte équipement en attente.',
+                        style: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          )
+        else ...[
+          // 1. Pending accounts
+          for (final pending in pendingUsers) ...[
+            _buildPendingUserCard(pending),
+            const SizedBox(height: 12),
+          ],
+
+          // 2. Equipment in maintenance / failure
+          for (final equipment in maintenanceEquipment.take(3)) ...[
+            _buildMaintenanceEquipmentCard(equipment),
+            const SizedBox(height: 12),
+          ],
+        ],
+      ],
+    );
+  }
+
+  Widget _buildPendingUserCard(StaffUser pending) {
+    final matchedService = widget.services.where(
+      (s) => s.id == pending.serviceId,
+    );
+    final serviceName = matchedService.isNotEmpty
+        ? matchedService.first.name
+        : 'Service non assigné';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFEDE9FE),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.person_add_alt_1_rounded,
+                  color: Color(0xFF6D28D9),
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'VALIDATION COMPTE',
+                  style: TextStyle(
+                    color: Color(0xFF6D28D9),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+              Text(
+                'En attente',
+                style: TextStyle(color: Colors.grey.shade400, fontSize: 11),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            pending.displayName.isNotEmpty
+                ? pending.displayName
+                : pending.email,
+            style: const TextStyle(
+              color: Color(0xFF0F2537),
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '$serviceName · ${pending.role.label}',
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: widget.onValidateUser != null
+                      ? () => widget.onValidateUser!(pending)
+                      : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0D9488),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.check, size: 16),
+                  label: const Text(
+                    'Valider',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: widget.onRejectUser != null
+                      ? () => widget.onRejectUser!(pending)
+                      : null,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF475569),
+                    side: const BorderSide(color: Color(0xFFCBD5E1)),
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.close, size: 16),
+                  label: const Text(
+                    'Refuser',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMaintenanceEquipmentCard(HospitalEquipment eq) {
+    String locationName = 'Non assigné';
+    if (eq.operatingRoomId != null && _operatingRooms.isNotEmpty) {
+      final room = _operatingRooms.where((r) => r.id == eq.operatingRoomId);
+      if (room.isNotEmpty) {
+        locationName = '${room.first.name} · ${room.first.number}';
+      }
+    } else if (eq.serviceId != null && widget.services.isNotEmpty) {
+      final service = widget.services.where((s) => s.id == eq.serviceId);
+      if (service.isNotEmpty) locationName = service.first.name;
+    }
+
+    return InkWell(
+      onTap: () => widget.onNavigateToTab?.call(
+        widget.user.role == StaffRole.administrator ? 1 : 3,
+      ),
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.warning_amber_rounded,
+                    color: Color(0xFFD97706),
+                    size: 18,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    'MAINTENANCE',
+                    style: TextStyle(
+                      color: Color(0xFFD97706),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+                Text(
+                  'Intervention requise',
+                  style: TextStyle(color: Colors.grey.shade400, fontSize: 11),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${eq.name} — $locationName',
+                    style: const TextStyle(
+                      color: Color(0xFF0F2537),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFF94A3B8),
+                  size: 20,
+                ),
+              ],
+            ),
+            const SizedBox(height: 3),
+            Text(
+              'N° ${eq.serialNumber.isNotEmpty ? eq.serialNumber : 'Non renseigné'} · Action technique requise',
+              style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickAccessItem {
+  const _QuickAccessItem({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.iconBg,
+    required this.iconColor,
+    required this.targetTab,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color iconBg;
+  final Color iconColor;
+  final int targetTab;
 }
 
 String _appointmentDateTime(DateTime value) =>

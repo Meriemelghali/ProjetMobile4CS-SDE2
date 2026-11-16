@@ -9,7 +9,9 @@ const {
   assertHospitalScope,
   assertServiceScope,
   hospitalIdFor,
+  hospitalIdsFor,
   serviceIdFor,
+  serviceIdsFor,
 } = require('../middleware/resourceAccess');
 const {
   requireDate,
@@ -78,7 +80,7 @@ function interventionResponse(intervention) {
   return {
     _id: intervention._id,
     surgeonId: idOf(intervention.surgeonId),
-    surgeonName: intervention.surgeonId?.displayName || '',
+    surgeonName: intervention.surgeonId?.displayName || intervention.surgeonId?.username || '',
     patientId: idOf(intervention.patientId),
     operatingRoomId: idOf(intervention.operatingRoomId),
     operatingRoomName: intervention.operatingRoomId?.name || '',
@@ -152,19 +154,24 @@ async function listOperatingRooms(req, res) {
   const query = {};
   if (req.query.hospitalId !== undefined) query.hospitalId = requireId(req.query.hospitalId, 'hospitalId');
   if (req.user.role === 'service_head') {
-    const serviceId = serviceIdFor(req.user);
-    const hospitalId = hospitalIdFor(req.user);
-    if (!serviceId || !hospitalId) {
-      throw new HttpError(403, 'A hospital and service assignment are required.');
+    const serviceIds = serviceIdsFor(req.user);
+    const hospitalIds = hospitalIdsFor(req.user);
+    if (query.hospitalId) {
+      if (hospitalIds.length > 0) assertHospitalScope(req.user, query.hospitalId);
+    } else if (hospitalIds.length > 0) {
+      query.hospitalId = { $in: hospitalIds };
     }
-    if (query.hospitalId) assertHospitalScope(req.user, query.hospitalId);
-    query.hospitalId = hospitalId;
-    query.serviceId = serviceId;
+    if (serviceIds.length > 0) {
+      query.serviceId = { $in: serviceIds };
+    }
   } else if (req.user.role === 'operating_room_manager') {
     const hospitalId = hospitalIdFor(req.user);
-    if (!hospitalId) throw new HttpError(403, 'A hospital assignment is required.');
-    if (query.hospitalId) assertHospitalScope(req.user, query.hospitalId);
-    query.hospitalId = hospitalId;
+    if (hospitalId) {
+      if (query.hospitalId && String(query.hospitalId) !== hospitalId) {
+        assertHospitalScope(req.user, query.hospitalId);
+      }
+      query.hospitalId = hospitalId;
+    }
   }
   const rooms = await OperatingRoom.find(query).sort({ number: 1 }).limit(200);
   return res.json({ operatingRooms: rooms.map(operatingRoomResponse) });
@@ -247,17 +254,18 @@ async function listInterventions(req, res) {
   let allowedOperatingRoomIds = null;
   if (req.user.role === 'operating_room_manager') {
     const hospitalId = hospitalIdFor(req.user);
-    if (!hospitalId) throw new HttpError(403, 'A hospital assignment is required.');
-    const rooms = await OperatingRoom.find({ hospitalId }).select('_id');
-    allowedOperatingRoomIds = new Set(rooms.map((room) => String(room._id)));
+    if (hospitalId) {
+      const rooms = await OperatingRoom.find({ hospitalId }).select('_id');
+      allowedOperatingRoomIds = new Set(rooms.map((room) => String(room._id)));
+    }
   }
   if (req.user.role === 'service_head') {
-    const serviceId = serviceIdFor(req.user);
-    const hospitalId = hospitalIdFor(req.user);
-    if (!serviceId || !hospitalId) {
-      throw new HttpError(403, 'A hospital and service assignment are required.');
-    }
-    const rooms = await OperatingRoom.find({ hospitalId, serviceId }).select('_id');
+    const serviceIds = serviceIdsFor(req.user);
+    const hospitalIds = hospitalIdsFor(req.user);
+    const orQuery = {};
+    if (hospitalIds.length > 0) orQuery.hospitalId = { $in: hospitalIds };
+    if (serviceIds.length > 0) orQuery.serviceId = { $in: serviceIds };
+    const rooms = await OperatingRoom.find(orQuery).select('_id');
     allowedOperatingRoomIds = new Set(rooms.map((room) => String(room._id)));
   }
   if (req.user.role === 'doctor') {
@@ -319,7 +327,7 @@ async function listInterventions(req, res) {
   }
   const interventions = await Intervention.find(query)
     .populate('operatingRoomId', 'name serviceId')
-    .populate('surgeonId', 'displayName')
+    .populate('surgeonId', 'displayName username')
     .sort({ start: 1 })
     .limit(500);
   return res.json({ interventions: interventions.map(interventionResponse) });
@@ -760,26 +768,23 @@ async function listEquipment(req, res) {
   if (req.user.role === 'service_head') {
     const serviceIds = serviceIdsFor(req.user);
     const hospitalIds = hospitalIdsFor(req.user);
-    if (!serviceIds.length || !hospitalIds.length) {
-      throw new HttpError(403, 'A hospital and service assignment are required.');
-    }
     if (query.hospitalId) {
-      assertHospitalScope(req.user, query.hospitalId);
-    } else {
+      if (hospitalIds.length > 0) assertHospitalScope(req.user, query.hospitalId);
+    } else if (hospitalIds.length > 0) {
       query.hospitalId = { $in: hospitalIds };
     }
-    query.serviceId = { $in: serviceIds };
+    if (serviceIds.length > 0) {
+      query.serviceId = { $in: serviceIds };
+    }
     query.operatingRoomId = null;
   } else if (req.user.role === 'operating_room_manager') {
     const hospitalId = hospitalIdFor(req.user);
-    if (!hospitalId) throw new HttpError(403, 'A hospital assignment is required.');
-    if (query.hospitalId && String(query.hospitalId) !== hospitalId) {
-      assertHospitalScope(req.user, query.hospitalId);
+    if (hospitalId) {
+      if (query.hospitalId && String(query.hospitalId) !== hospitalId) {
+        assertHospitalScope(req.user, query.hospitalId);
+      }
+      query.hospitalId = hospitalId;
     }
-    const rooms = await OperatingRoom.find({ hospitalId }).select('_id');
-    query.hospitalId = hospitalId;
-    query.operatingRoomId = { $in: rooms.map((room) => room._id) };
-    query.serviceId = null;
   }
   const equipment = await Equipment.find(query).select('+assetTag').sort({ name: 1 }).limit(500);
   return res.json({ equipment: equipment.map(equipmentResponse) });
@@ -906,14 +911,18 @@ async function assertEquipmentScope(user, equipment) {
     return;
   }
   if (user.role === 'operating_room_manager') {
-    if (equipment.serviceId || !equipment.operatingRoomId) {
-      throw new HttpError(403, 'Only operating room equipment is in your scope.');
+    if (equipment.operatingRoomId) {
+      const room = await OperatingRoom.findById(equipment.operatingRoomId).select('hospitalId');
+      if (!room) throw new HttpError(400, 'operatingRoomId does not exist.');
+      assertHospitalScope(user, equipment.hospitalId);
+      assertHospitalScope(user, room.hospitalId);
+      return;
     }
-    const room = await OperatingRoom.findById(equipment.operatingRoomId).select('hospitalId');
-    if (!room) throw new HttpError(400, 'operatingRoomId does not exist.');
-    assertHospitalScope(user, equipment.hospitalId);
-    assertHospitalScope(user, room.hospitalId);
-    return;
+    if (equipment.serviceId) {
+      assertHospitalScope(user, equipment.hospitalId);
+      return;
+    }
+    throw new HttpError(400, 'Equipment must be assigned to either a service or an operating room.');
   }
   throw new HttpError(403, 'Action is not authorized.');
 }

@@ -5,7 +5,8 @@ enum AppointmentStatus {
   completed('Terminée', 'completed'),
   proposed('Créneau proposé', 'proposed'),
   rejected('Refusé', 'rejected'),
-  cancelled('Annulé', 'cancelled');
+  cancelled('Annulé', 'cancelled'),
+  completed('Terminé', 'completed');
 
   const AppointmentStatus(this.label, this.apiValue);
 
@@ -20,7 +21,8 @@ enum AppointmentStatus {
     'proposed' => AppointmentStatus.proposed,
     'rejected' => AppointmentStatus.rejected,
     'cancelled' => AppointmentStatus.cancelled,
-    _ => throw FormatException('Statut de rendez-vous inconnu : $value'),
+    'completed' => AppointmentStatus.completed,
+    _ => AppointmentStatus.pending, // valeur inconnue → pending par défaut
   };
 }
 

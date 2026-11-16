@@ -55,11 +55,14 @@ List<ServiceOccupancy> calculateServiceOccupancies({
   required Iterable<HospitalRoom> rooms,
   required Iterable<HospitalBed> beds,
   String? hospitalId,
+  bool onlyActive = true,
 }) {
   final selectedRooms = rooms
       .where((room) => hospitalId == null || room.hospitalId == hospitalId)
       .toList();
-  final occupancies = services.where((service) => service.isActive).map((
+  final filteredServices =
+      onlyActive ? services.where((service) => service.isActive) : services;
+  final occupancies = filteredServices.map((
     service,
   ) {
     final serviceRooms = selectedRooms
