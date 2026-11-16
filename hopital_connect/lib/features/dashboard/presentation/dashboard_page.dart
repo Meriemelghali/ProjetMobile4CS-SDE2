@@ -927,6 +927,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> _showMoreDestinations(
     List<NavigationDestination> destinations,
+    List<int> overflowIndices,
   ) async {
     final selectedPage = await showModalBottomSheet<int>(
       context: context,
@@ -935,7 +936,7 @@ class _DashboardPageState extends State<DashboardPage> {
         child: ListView(
           shrinkWrap: true,
           children: [
-            for (var index = 4; index < destinations.length; index++)
+            for (final index in overflowIndices)
               ListTile(
                 leading: destinations[index].icon,
                 title: Text(destinations[index].label),
@@ -1319,9 +1320,21 @@ class _DashboardPageState extends State<DashboardPage> {
           ];
 
     final hasMoreDestinations = destinations.length > 5;
+    // Onglets affichés dans la barre du bas quand il y en a trop : pour le
+    // médecin et l'infirmier, « Dossiers » est mis en avant au lieu d'être
+    // caché dans « Plus ». Les index des pages ne changent pas.
+    final pinnedIndices = !hasMoreDestinations
+        ? List<int>.generate(destinations.length, (index) => index)
+        : medicalRecordsIndex >= 0
+        ? <int>[0, medicalRecordsIndex, 1, 3]
+        : const <int>[0, 1, 2, 3];
+    final overflowIndices = [
+      for (var index = 0; index < destinations.length; index++)
+        if (!pinnedIndices.contains(index)) index,
+    ];
     final visibleDestinations = hasMoreDestinations
         ? <NavigationDestination>[
-            ...destinations.take(4),
+            for (final index in pinnedIndices) destinations[index],
             const NavigationDestination(
               icon: Icon(Icons.more_horiz),
               selectedIcon: Icon(Icons.more_horiz),
@@ -1329,9 +1342,10 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
           ]
         : destinations;
-    final visibleSelectedIndex = hasMoreDestinations && _selectedIndex >= 4
-        ? 4
-        : _selectedIndex;
+    final pinnedPosition = pinnedIndices.indexOf(_selectedIndex);
+    final visibleSelectedIndex = pinnedPosition >= 0
+        ? pinnedPosition
+        : (hasMoreDestinations ? pinnedIndices.length : _selectedIndex);
     final titles = isPatient
         ? isArabic
               ? const ['مساحة المريض', 'سجلي الطبي', 'مواعيدي', 'ملفي']
@@ -1478,10 +1492,10 @@ class _DashboardPageState extends State<DashboardPage> {
           selectedIndex: visibleSelectedIndex,
           labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
           onDestinationSelected: (index) {
-            if (hasMoreDestinations && index == 4) {
-              _showMoreDestinations(destinations);
+            if (hasMoreDestinations && index == pinnedIndices.length) {
+              _showMoreDestinations(destinations, overflowIndices);
             } else {
-              setState(() => _selectedIndex = index);
+              setState(() => _selectedIndex = pinnedIndices[index]);
             }
           },
           destinations: visibleDestinations,
