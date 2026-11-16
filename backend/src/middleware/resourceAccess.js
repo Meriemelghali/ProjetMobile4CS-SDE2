@@ -10,11 +10,12 @@ function serviceIdFor(user) {
 function serviceIdsFor(user) {
   if (user.role === 'service_head') {
     const scopedIds = user.$locals && user.$locals.serviceHeadServiceIds;
-    if (Array.isArray(scopedIds)) return scopedIds.map(String);
+    if (Array.isArray(scopedIds) && scopedIds.length) return scopedIds.map(String);
+    const ids = (user.serviceIds || []).map(String);
     if (user.serviceId && !getUserRoles(user).includes('doctor')) {
-      return [user.serviceId.toString()];
+      ids.push(user.serviceId.toString());
     }
-    return [];
+    return [...new Set(ids)];
   }
   return user.serviceId ? [user.serviceId.toString()] : [];
 }
@@ -26,7 +27,7 @@ function hospitalIdFor(user) {
 function hospitalIdsFor(user) {
   if (user.role === 'service_head') {
     const scopedIds = user.$locals && user.$locals.serviceHeadHospitalIds;
-    if (Array.isArray(scopedIds)) return scopedIds.map(String);
+    if (Array.isArray(scopedIds) && scopedIds.length) return scopedIds.map(String);
   }
   return user.hospitalId ? [user.hospitalId.toString()] : [];
 }
@@ -43,6 +44,9 @@ async function attachServiceHeadScope(user, {
     headUserId: user._id,
   }).distinct('_id');
   const serviceIds = new Set(headedIds.map(String));
+  for (const serviceId of user.serviceIds || []) {
+    serviceIds.add(serviceId.toString());
+  }
   if (user.serviceId && !getUserRoles(user).includes('doctor')) {
     serviceIds.add(user.serviceId.toString());
   }
@@ -52,9 +56,13 @@ async function attachServiceHeadScope(user, {
       serviceIds: { $in: ids },
     }).distinct('_id')
     : [];
+  const hospitalIdSet = new Set(hospitalIds.map(String));
+  if (user.hospitalId) {
+    hospitalIdSet.add(user.hospitalId.toString());
+  }
   if (!user.$locals) user.$locals = {};
   user.$locals.serviceHeadServiceIds = ids;
-  user.$locals.serviceHeadHospitalIds = hospitalIds.map(String);
+  user.$locals.serviceHeadHospitalIds = [...hospitalIdSet];
 }
 
 function assertPharmacyScope(user, pharmacyId) {

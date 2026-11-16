@@ -1488,6 +1488,7 @@ String _statusLabel(AppointmentStatus status, bool isArabic) => isArabic
         AppointmentStatus.proposed => 'اقتُرح موعد جديد',
         AppointmentStatus.rejected => 'مرفوض',
         AppointmentStatus.cancelled => 'ملغى',
+        AppointmentStatus.completed => 'منتهي',
       }
     : status.label;
 
@@ -1505,6 +1506,7 @@ List<AppointmentStatus> _nextStatuses(AppointmentStatus current) =>
       AppointmentStatus.proposed => const [],
       AppointmentStatus.rejected => const [],
       AppointmentStatus.cancelled => const [],
+      AppointmentStatus.completed => const [],
     };
 
 Color _statusColor(AppointmentStatus status) => switch (status) {
@@ -1514,6 +1516,7 @@ Color _statusColor(AppointmentStatus status) => switch (status) {
   AppointmentStatus.proposed => AppColors.blue,
   AppointmentStatus.rejected => const Color(0xFFB3261E),
   AppointmentStatus.cancelled => const Color(0xFF8797A0),
+  AppointmentStatus.completed => const Color(0xFF8797A0),
 };
 
 IconData _statusIcon(AppointmentStatus status) => switch (status) {
@@ -1523,6 +1526,7 @@ IconData _statusIcon(AppointmentStatus status) => switch (status) {
   AppointmentStatus.proposed => Icons.event_repeat_outlined,
   AppointmentStatus.rejected => Icons.event_busy_outlined,
   AppointmentStatus.cancelled => Icons.event_busy_outlined,
+  AppointmentStatus.completed => Icons.check_circle_outline,
 };
 
 String _dateTimeLabel(DateTime value) =>

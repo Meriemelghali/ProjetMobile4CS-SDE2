@@ -584,11 +584,11 @@ class _EquipmentDialogState extends State<EquipmentDialog> {
       .toList();
   late String _targetType = _initialTargetType();
   late String _targetId = _targetType == 'service'
-      ? _existingOrEmpty(
+      ? _existingOrFirstOrEmpty(
           _hospitalServices.map((item) => item.id),
           widget.equipment?.serviceId,
         )
-      : _existingOrEmpty(
+      : _existingOrFirstOrEmpty(
           _hospitalOperatingRooms.map((item) => item.id),
           widget.equipment?.operatingRoomId,
         );
@@ -693,6 +693,18 @@ class _EquipmentDialogState extends State<EquipmentDialog> {
   Widget build(BuildContext context) {
     final serviceItems = _hospitalServices;
     final operatingRoomItems = _hospitalOperatingRooms;
+    final targetTypes = [
+      if (serviceItems.isNotEmpty)
+        const DropdownMenuItem(value: 'service', child: Text('Service')),
+      if (operatingRoomItems.isNotEmpty)
+        const DropdownMenuItem(
+          value: 'operatingRoom',
+          child: Text('Salle d’opération'),
+        ),
+    ];
+    if (targetTypes.isNotEmpty && !targetTypes.any((item) => item.value == _targetType)) {
+      _targetType = targetTypes.first.value!;
+    }
     final targets = _targetType == 'service'
         ? serviceItems
               .map(
@@ -703,18 +715,18 @@ class _EquipmentDialogState extends State<EquipmentDialog> {
         : operatingRoomItems
               .map(
                 (item) =>
-                    DropdownMenuItem(value: item.id, child: Text(item.name)),
+                    DropdownMenuItem(
+                      value: item.id,
+                      child: Text('${item.name} · ${item.number}'),
+                    ),
               )
               .toList();
-    final targetTypes = [
-      if (serviceItems.isNotEmpty)
-        const DropdownMenuItem(value: 'service', child: Text('Service')),
-      if (operatingRoomItems.isNotEmpty)
-        const DropdownMenuItem(
-          value: 'operatingRoom',
-          child: Text('Salle d’opération'),
-        ),
-    ];
+    if (targets.isNotEmpty && !targets.any((item) => item.value == _targetId)) {
+      _targetId = targets.first.value!;
+    }
+    if (widget.hospitals.isNotEmpty && !widget.hospitals.any((h) => h.id == _hospitalId)) {
+      _hospitalId = widget.hospitals.first.id;
+    }
     return _formDialog(
       context: context,
       title: widget.equipment == null
@@ -762,7 +774,7 @@ class _EquipmentDialogState extends State<EquipmentDialog> {
             label: _targetType == 'service' ? 'Service' : 'Salle d’opération',
             items: targets,
             onChanged: (value) => setState(() => _targetId = value!),
-            enabled: !widget.lockTarget,
+            enabled: targets.length > 1,
           ),
         _dropdown<EquipmentStatus>(
           value: _status,
@@ -999,7 +1011,10 @@ class _InterventionDialogState extends State<InterventionDialog> {
         items: widget.operatingRooms
             .map(
               (item) =>
-                  DropdownMenuItem(value: item.id, child: Text(item.name)),
+                  DropdownMenuItem(
+                    value: item.id,
+                    child: Text('${item.name} · ${item.number}'),
+                  ),
             )
             .toList(),
         onChanged: (value) => setState(() => _roomId = value!),
@@ -1257,5 +1272,6 @@ List<HospitalService> _servicesFor(
   final hospital = hospitals.where((item) => item.id == hospitalId);
   if (hospital.isEmpty) return const [];
   final serviceIds = hospital.first.serviceIds.toSet();
+  if (serviceIds.isEmpty) return services;
   return services.where((service) => serviceIds.contains(service.id)).toList();
 }

@@ -728,6 +728,7 @@ class _AppointmentStatusChip extends StatelessWidget {
       AppointmentStatus.proposed => AppColors.blue,
       AppointmentStatus.rejected => const Color(0xFFB3261E),
       AppointmentStatus.cancelled => const Color(0xFF8797A0),
+      AppointmentStatus.completed => const Color(0xFF8797A0),
     };
     final label = isArabic
         ? switch (status) {
@@ -737,6 +738,7 @@ class _AppointmentStatusChip extends StatelessWidget {
             AppointmentStatus.proposed => 'اقتُرح موعد جديد',
             AppointmentStatus.rejected => 'مرفوض',
             AppointmentStatus.cancelled => 'ملغى',
+            AppointmentStatus.completed => 'منتهي',
           }
         : status.label;
     return Chip(

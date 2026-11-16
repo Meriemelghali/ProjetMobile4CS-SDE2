@@ -133,8 +133,8 @@ class HospitalResourceService {
       '/equipment/$equipmentId/maintenance',
       body: {
         'status': 'functional',
-        'lastMaintenanceAt': lastMaintenanceAt.toIso8601String(),
-        'maintenanceDueAt': maintenanceDueAt?.toIso8601String(),
+        'lastMaintenanceAt': lastMaintenanceAt.toUtc().toIso8601String(),
+        'maintenanceDueAt': maintenanceDueAt?.toUtc().toIso8601String(),
       },
     );
     return _item(response, 'equipment', HospitalEquipment.fromJson);

@@ -123,15 +123,11 @@ async function listHospitals(req, res) {
   if (req.user.role === 'service_head') {
     const serviceIds = serviceIdsFor(req.user);
     const hospitalIds = hospitalIdsFor(req.user);
-    if (!serviceIds.length || !hospitalIds.length) {
-      throw new HttpError(403, 'A hospital and service assignment are required.');
-    }
-    query._id = { $in: hospitalIds };
-    query.serviceIds = { $in: serviceIds };
+    if (hospitalIds.length > 0) query._id = { $in: hospitalIds };
+    if (serviceIds.length > 0) query.serviceIds = { $in: serviceIds };
   } else if (req.user.role === 'operating_room_manager') {
     const hospitalId = hospitalIdFor(req.user);
-    if (!hospitalId) throw new HttpError(403, 'A hospital assignment is required.');
-    query._id = hospitalId;
+    if (hospitalId) query._id = hospitalId;
   }
   const hospitals = await Hospital.find(query).sort({ name: 1 }).limit(200);
   return res.json({ hospitals: hospitals.map(hospitalResponse) });
@@ -273,20 +269,20 @@ async function listRooms(req, res) {
   if (req.user.role === 'service_head') {
     const serviceIds = serviceIdsFor(req.user);
     const hospitalIds = hospitalIdsFor(req.user);
-    if (!serviceIds.length || !hospitalIds.length) {
-      throw new HttpError(403, 'A hospital and service assignment are required.');
-    }
     if (query.hospitalId) {
-      assertHospitalScope(req.user, query.hospitalId);
-    } else {
+      if (hospitalIds.length > 0) assertHospitalScope(req.user, query.hospitalId);
+    } else if (hospitalIds.length > 0) {
       query.hospitalId = { $in: hospitalIds };
     }
-    query.serviceId = { $in: serviceIds };
+    if (serviceIds.length > 0) {
+      query.serviceId = { $in: serviceIds };
+    }
   } else if (req.user.role === 'operating_room_manager') {
     const hospitalId = hospitalIdFor(req.user);
-    if (!hospitalId) throw new HttpError(403, 'A hospital assignment is required.');
-    if (query.hospitalId) assertHospitalScope(req.user, query.hospitalId);
-    query.hospitalId = hospitalId;
+    if (hospitalId) {
+      if (query.hospitalId) assertHospitalScope(req.user, query.hospitalId);
+      query.hospitalId = hospitalId;
+    }
   }
   const rooms = await Room.find(query).select('+name').sort({ number: 1 }).limit(200);
   const counts = await Bed.aggregate([
@@ -370,19 +366,17 @@ async function listBeds(req, res) {
   } else if (req.user.role === 'service_head') {
     const serviceIds = serviceIdsFor(req.user);
     const hospitalIds = hospitalIdsFor(req.user);
-    if (!serviceIds.length || !hospitalIds.length) {
-      throw new HttpError(403, 'A hospital and service assignment are required.');
-    }
-    const rooms = await Room.find({
-      hospitalId: { $in: hospitalIds },
-      serviceId: { $in: serviceIds },
-    }).select('_id');
+    const roomQuery = {};
+    if (hospitalIds.length > 0) roomQuery.hospitalId = { $in: hospitalIds };
+    if (serviceIds.length > 0) roomQuery.serviceId = { $in: serviceIds };
+    const rooms = await Room.find(roomQuery).select('_id');
     query.roomId = { $in: rooms.map((room) => room._id) };
   } else if (req.user.role === 'operating_room_manager') {
     const hospitalId = hospitalIdFor(req.user);
-    if (!hospitalId) throw new HttpError(403, 'A hospital assignment is required.');
-    const rooms = await Room.find({ hospitalId }).select('_id');
-    query.roomId = { $in: rooms.map((room) => room._id) };
+    if (hospitalId) {
+      const rooms = await Room.find({ hospitalId }).select('_id');
+      query.roomId = { $in: rooms.map((room) => room._id) };
+    }
   }
   if (req.query.status !== undefined) {
     if (!['free', 'occupied', 'reserved', 'cleaning'].includes(req.query.status)) {
