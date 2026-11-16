@@ -17,6 +17,7 @@ test('pharmacy HTTP flow enforces scope and decrements stock', { skip: !enabled 
   const suffix = Date.now().toString();
   const password = 'PharmacyIntegration123!';
   const passwordHash = await hashPassword(password);
+  await Prescription.syncIndexes();
   const [pharmacyOne, pharmacyTwo] = await Pharmacy.create([
     { name: `Integration One ${suffix}` }, { name: `Integration Two ${suffix}` },
   ]);

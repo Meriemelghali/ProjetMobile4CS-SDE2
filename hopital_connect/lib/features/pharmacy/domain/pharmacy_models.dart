@@ -60,15 +60,18 @@ class PharmacyLine {
   const PharmacyLine({
     required this.medicationId,
     required this.name,
+    required this.dosage,
     required this.quantity,
   });
   final String medicationId;
   final String name;
+  final String dosage;
   final int quantity;
 
   factory PharmacyLine.fromJson(Map<String, dynamic> json) => PharmacyLine(
     medicationId: _id(json['medicationId']),
     name: json['name'] as String? ?? '',
+    dosage: json['dosage'] as String? ?? '',
     quantity: (json['quantity'] as num?)?.toInt() ?? 0,
   );
 }
@@ -78,6 +81,7 @@ enum PrescriptionStatus { pending, validated, dispensed, rejected }
 class Prescription {
   const Prescription({
     required this.id,
+    required this.appointmentId,
     required this.patientName,
     required this.doctorName,
     required this.patientAllergies,
@@ -87,6 +91,7 @@ class Prescription {
     required this.createdAt,
   });
   final String id;
+  final String appointmentId;
   final String patientName;
   final String doctorName;
   final List<String> patientAllergies;
@@ -109,6 +114,7 @@ class Prescription {
 
     return Prescription(
       id: _id(json['_id'] ?? json['id']),
+      appointmentId: _id(json['appointmentId']),
       patientName: person(json['patient']),
       doctorName: person(json['doctor']),
       patientAllergies:

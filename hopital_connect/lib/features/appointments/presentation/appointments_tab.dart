@@ -22,6 +22,7 @@ class AppointmentsTab extends StatefulWidget {
     this.onDecision,
     this.onRespondProposal,
     this.isAdmin = false,
+    this.canManageStatus = false,
     this.currentUserId = '',
   });
 
@@ -42,6 +43,7 @@ class AppointmentsTab extends StatefulWidget {
   onDecision;
   final void Function(Appointment appointment, bool accept)? onRespondProposal;
   final bool isAdmin;
+  final bool canManageStatus;
   final String currentUserId;
 
   @override
@@ -558,7 +560,9 @@ class _AppointmentsTabState extends State<AppointmentsTab> {
                   status: appointment.status,
                   isArabic: widget.isArabic,
                 ),
-                if ((widget.isAdmin || widget.onDecision != null) &&
+                if ((widget.isAdmin ||
+                        widget.canManageStatus ||
+                        widget.onDecision != null) &&
                     appointment.status != AppointmentStatus.pending &&
                     canEdit)
                   PopupMenuButton<AppointmentStatus>(
@@ -566,7 +570,13 @@ class _AppointmentsTabState extends State<AppointmentsTab> {
                     onSelected: (status) =>
                         widget.onStatusChange(appointment, status),
                     itemBuilder: (_) => [
-                      for (final status in _nextStatuses(appointment.status))
+                      for (final status
+                          in _nextStatuses(appointment.status).where(
+                            (status) =>
+                                widget.isAdmin ||
+                                !widget.canManageStatus ||
+                                status != AppointmentStatus.cancelled,
+                          ))
                         PopupMenuItem(value: status, child: Text(status.label)),
                     ],
                   ),
@@ -1087,12 +1097,14 @@ class PatientFollowUpsTab extends StatefulWidget {
     required this.onSelectAppointments,
     this.initialType = PatientRecordType.all,
     this.isArabic = false,
+    this.prescriptions = const [],
   });
 
   final List<Appointment> appointments;
   final ValueChanged<PatientRecordType> onSelectAppointments;
   final PatientRecordType initialType;
   final bool isArabic;
+  final List<Prescription> prescriptions;
 
   @override
   State<PatientFollowUpsTab> createState() => _PatientFollowUpsTabState();
@@ -1151,6 +1163,9 @@ class _PatientFollowUpsTabState extends State<PatientFollowUpsTab> {
     final showConsultations =
         _type == PatientRecordType.all ||
         _type == PatientRecordType.consultations;
+    final showPrescriptions =
+        _type == PatientRecordType.all ||
+        _type == PatientRecordType.prescriptions;
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -1228,12 +1243,48 @@ class _PatientFollowUpsTabState extends State<PatientFollowUpsTab> {
                 ),
               ),
         ],
-        if (_type != PatientRecordType.consultations) ...[
+        if (_type != PatientRecordType.consultations && !showPrescriptions) ...[
           const SizedBox(height: 18),
           _EmptyRecordCard(
             icon: _recordIcon(_type),
             message: _emptyRecordMessage(_type, widget.isArabic),
           ),
+        ],
+        if (showPrescriptions) ...[
+          const SizedBox(height: 18),
+          Text(
+            _text('Mes ordonnances', 'وصفاتي الطبية'),
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(color: AppColors.navy, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          if (widget.prescriptions.isEmpty)
+            _EmptyRecordCard(
+              icon: Icons.receipt_long_outlined,
+              message: _text(
+                'Aucune ordonnance disponible.',
+                'لا توجد وصفات طبية متاحة.',
+              ),
+            )
+          else
+            for (final prescription in widget.prescriptions)
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.receipt_long_outlined),
+                  title: Text(
+                    prescription.medications
+                        .map(
+                          (item) =>
+                              '${item.name}${item.dosage.isEmpty ? '' : ' ${item.dosage}'} x${item.quantity}',
+                        )
+                        .join(', '),
+                  ),
+                  subtitle: Text(
+                    '${_prescriptionStatusLabel(prescription.status, widget.isArabic)}'
+                    '${prescription.rejectionReason.isEmpty ? '' : '\n${prescription.rejectionReason}'}',
+                  ),
+                ),
+              ),
         ],
         const SizedBox(height: 18),
         InfoCard(
@@ -1316,6 +1367,21 @@ String _emptyRecordMessage(PatientRecordType type, bool isArabic) => isArabic
         PatientRecordType.prescriptions => 'Aucune ordonnance disponible.',
         PatientRecordType.consultations =>
           'Aucune consultation passée disponible.',
+      };
+
+String _prescriptionStatusLabel(PrescriptionStatus status, bool isArabic) =>
+    isArabic
+    ? switch (status) {
+        PrescriptionStatus.pending => 'قيد انتظار الصيدلية',
+        PrescriptionStatus.validated => 'تمت المصادقة',
+        PrescriptionStatus.dispensed => 'تم الصرف',
+        PrescriptionStatus.rejected => 'مرفوضة',
+      }
+    : switch (status) {
+        PrescriptionStatus.pending => 'En attente de la pharmacie',
+        PrescriptionStatus.validated => 'Validée par la pharmacie',
+        PrescriptionStatus.dispensed => 'Délivrée',
+        PrescriptionStatus.rejected => 'Refusée',
       };
 
 class SecretaryHomeTab extends StatelessWidget {
@@ -1881,6 +1947,7 @@ String _statusLabel(AppointmentStatus status, bool isArabic) => isArabic
         AppointmentStatus.pending => 'قيد الانتظار',
         AppointmentStatus.accepted => 'مؤكد',
         AppointmentStatus.inProgress => 'جارٍ',
+        AppointmentStatus.completed => 'مكتمل',
         AppointmentStatus.proposed => 'اقتُرح موعد جديد',
         AppointmentStatus.rejected => 'مرفوض',
         AppointmentStatus.cancelled => 'ملغى',
@@ -1898,7 +1965,11 @@ List<AppointmentStatus> _nextStatuses(AppointmentStatus current) =>
         AppointmentStatus.inProgress,
         AppointmentStatus.cancelled,
       ],
-      AppointmentStatus.inProgress => [AppointmentStatus.cancelled],
+      AppointmentStatus.inProgress => [
+        AppointmentStatus.completed,
+        AppointmentStatus.cancelled,
+      ],
+      AppointmentStatus.completed => const [],
       AppointmentStatus.proposed => const [],
       AppointmentStatus.rejected => const [],
       AppointmentStatus.cancelled => const [],
@@ -1909,6 +1980,7 @@ Color _statusColor(AppointmentStatus status) => switch (status) {
   AppointmentStatus.pending => const Color(0xFFC17A00),
   AppointmentStatus.accepted => AppColors.blue,
   AppointmentStatus.inProgress => AppColors.mint,
+  AppointmentStatus.completed => const Color(0xFF2E7D32),
   AppointmentStatus.proposed => AppColors.blue,
   AppointmentStatus.rejected => const Color(0xFFB3261E),
   AppointmentStatus.cancelled => const Color(0xFF8797A0),
@@ -1919,6 +1991,7 @@ IconData _statusIcon(AppointmentStatus status) => switch (status) {
   AppointmentStatus.pending => Icons.pending_actions_outlined,
   AppointmentStatus.accepted => Icons.event_available_outlined,
   AppointmentStatus.inProgress => Icons.medical_services_outlined,
+  AppointmentStatus.completed => Icons.check_circle_outline,
   AppointmentStatus.proposed => Icons.event_repeat_outlined,
   AppointmentStatus.rejected => Icons.event_busy_outlined,
   AppointmentStatus.cancelled => Icons.event_busy_outlined,

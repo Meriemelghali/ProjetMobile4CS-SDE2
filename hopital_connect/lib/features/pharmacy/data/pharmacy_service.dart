@@ -22,6 +22,11 @@ class PharmacyService {
     Prescription.fromJson,
     status == null ? null : {'status': status},
   );
+  Future<List<Prescription>> myPrescriptions() async => _list(
+    '/pharmacy/prescriptions/mine',
+    'prescriptions',
+    Prescription.fromJson,
+  );
   Future<List<Dispensation>> dispensations() async =>
       _list('/pharmacy/dispensations', 'dispensations', Dispensation.fromJson);
   Future<List<MedicationRequest>> requests() async =>
@@ -65,6 +70,12 @@ class PharmacyService {
   Future<void> dispense(String id) async {
     await _api.post('/pharmacy/prescriptions/$id/dispense');
   }
+  Future<Prescription> createPrescription(Map<String, Object?> body) async =>
+      _item(
+        await _api.post('/pharmacy/prescriptions', body: body),
+        'prescription',
+        Prescription.fromJson,
+      );
 
   Future<MedicationRequest> requestAction(
     String id,

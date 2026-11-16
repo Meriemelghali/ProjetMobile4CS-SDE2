@@ -9,7 +9,7 @@ router.get('/doctors', authorize('admin', 'secretary', 'patient'), controller.li
 router.get('/availability', authorize('admin', 'secretary', 'patient'), controller.available);
 router.get('/', authorize('admin', 'doctor', 'secretary', 'patient'), controller.list);
 router.post('/', authorize('patient'), controller.create);
-router.put('/:id', authorize('admin', 'secretary', 'patient'), controller.update);
+router.put('/:id', authorize('admin', 'doctor', 'secretary', 'patient'), controller.update);
 router.post('/:id/claim', authorize('admin', 'secretary'), controller.claim);
 router.post('/:id/release', authorize('admin', 'secretary'), controller.release);
 router.post('/:id/decision', authorize('admin', 'secretary'), controller.decide);

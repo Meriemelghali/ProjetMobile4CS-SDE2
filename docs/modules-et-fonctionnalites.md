@@ -138,15 +138,18 @@ Fonctionnalités réalisées :
 
 **But :** suivre les produits et les stocks de la pharmacie hospitalière.
 
-Fonctionnalités possibles :
+Fonctionnalités :
 
 - Consulter un catalogue de médicaments ou de produits.
 - Ajouter ou modifier un produit et son stock.
 - Enregistrer une entrée ou une sortie de stock.
 - Signaler les stocks bas ou les dates de péremption proches.
 - Restreindre la gestion au pharmacien et à l’administrateur autorisé.
+- Relier une ordonnance à un rendez-vous et à sa consultation.
+- Permettre au médecin de créer une ordonnance pour son propre rendez-vous.
+- Envoyer l’ordonnance à la pharmacie et notifier le patient de chaque changement d’état.
 
-**Priorité :** extension à valider. La pharmacie est un domaine distinct du parcours principal de coordination des équipes.
+**Priorité :** module connecté au parcours rendez-vous ; les données utilisées pour la démonstration doivent rester fictives.
 
 ### Module 9 — Tableau de bord et notifications
 
