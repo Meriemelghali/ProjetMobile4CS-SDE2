@@ -2,9 +2,11 @@ const mongoose = require('mongoose');
 const Pharmacy = require('../models/Pharmacy');
 const Medication = require('../models/Medication');
 const Prescription = require('../models/Prescription');
+const Appointment = require('../models/Appointment');
 const Dispensation = require('../models/Dispensation');
 const MedicationRequest = require('../models/MedicationRequest');
 const SupplyOrder = require('../models/SupplyOrder');
+const Notification = require('../models/Notification');
 const User = require('../models/User');
 const { HttpError } = require('../errors');
 const { pharmacyIdFor: assignedPharmacyId, assertPharmacyScope } = require('../middleware/resourceAccess');
@@ -19,15 +21,34 @@ const {
 
 function pharmacyIdFor(user) {
   if (user.role === 'admin') return null;
+  if (user.role === 'doctor') return null;
   const pharmacyId = assignedPharmacyId(user);
   if (!pharmacyId || user.role !== 'pharmacist') throw new HttpError(403, 'A pharmacy assignment is required.');
   assertPharmacyScope(user, pharmacyId);
   return pharmacyId;
 }
 
+async function notifyPrescription(prescription, title, message) {
+  if (!prescription.appointmentId) return;
+  await Notification.create({
+    recipientId: prescription.patientId,
+    appointmentId: prescription.appointmentId,
+    prescriptionId: prescription._id,
+    title,
+    message,
+  });
+}
+
 function scopeQuery(user, field = 'pharmacyId') {
   const pharmacyId = pharmacyIdFor(user);
   return pharmacyId ? { [field]: pharmacyId } : {};
+}
+
+async function listPatientPrescriptions(req, res) {
+  const prescriptions = await Prescription.find({ patientId: req.user._id })
+    .sort({ createdAt: -1 })
+    .limit(100);
+  return res.json({ prescriptions: prescriptions.map(prescriptionResponse) });
 }
 
 function idOf(value) {
@@ -58,6 +79,7 @@ function userResponse(user) {
 function prescriptionResponse(item) {
   return {
     _id: item._id,
+    appointmentId: idOf(item.appointmentId),
     patientId: idOf(item.patientId),
     patient: userResponse(item.patientId),
     doctorId: idOf(item.doctorId),
@@ -213,16 +235,53 @@ async function listPrescriptions(req, res) {
 
 async function createPrescription(req, res) {
   const body = requireObject(req.body);
-  rejectUnknownFields(body, ['patientId', 'doctorId', 'pharmacyId', 'medications']);
-  const pharmacyId = pharmacyIdFor(req.user) || requireId(body.pharmacyId, 'pharmacyId');
+  rejectUnknownFields(body, ['appointmentId', 'patientId', 'doctorId', 'pharmacyId', 'medications']);
+  const appointmentId = requireId(body.appointmentId, 'appointmentId');
+  const appointment = await Appointment.findById(appointmentId);
+  if (!appointment) throw new HttpError(404, 'Appointment not found.');
+  if (await Prescription.exists({ appointmentId })) {
+    throw new HttpError(409, 'This appointment already has a prescription.');
+  }
+  const isDoctor = req.user.role === 'doctor';
+  if (isDoctor && appointment.doctorId.toString() !== req.user._id.toString()) {
+    throw new HttpError(403, 'You can only prescribe for your own appointments.');
+  }
+  if (isDoctor && !['in_progress', 'completed'].includes(appointment.status)) {
+    throw new HttpError(409, 'The consultation must be in progress or completed.');
+  }
+  const patientId = isDoctor ? appointment.patientId : requireId(body.patientId, 'patientId');
+  const doctorId = isDoctor ? appointment.doctorId : requireId(body.doctorId, 'doctorId');
+  if (appointment.patientId.toString() !== patientId.toString() ||
+      appointment.doctorId.toString() !== doctorId.toString()) {
+    throw new HttpError(400, 'The prescription must match the appointment.');
+  }
+  const pharmacyId = pharmacyIdFor(req.user) ||
+    (body.pharmacyId ? requireId(body.pharmacyId, 'pharmacyId') :
+      (await Pharmacy.findOne({ active: true }).sort({ name: 1 }))?._id);
+  if (!pharmacyId) throw new HttpError(400, 'An active pharmacy is required.');
+  if (!(await Pharmacy.exists({ _id: pharmacyId, active: true }))) {
+    throw new HttpError(409, 'The selected pharmacy is inactive.');
+  }
   const items = parseItems(body.medications).map((item) => ({ ...item, name: item.name || '' }));
+  const medicationIds = new Set();
   for (const item of items) {
-    const medication = await findScopedMedication({ role: req.user.role, pharmacyId }, item.medicationId);
+    if (medicationIds.has(item.medicationId.toString())) {
+      throw new HttpError(400, 'A medication cannot be repeated in the same prescription.');
+    }
+    medicationIds.add(item.medicationId.toString());
+    const medication = await Medication.findOne({ _id: item.medicationId, pharmacyId });
+    if (!medication) throw new HttpError(404, 'Medication not found in the selected pharmacy.');
     item.name = medication.name;
+    item.dosage = medication.dosage;
   }
   const prescription = await Prescription.create({
-    patientId: requireId(body.patientId, 'patientId'), doctorId: requireId(body.doctorId, 'doctorId'), pharmacyId, medications: items,
+    appointmentId, patientId, doctorId, pharmacyId, medications: items,
   });
+  await notifyPrescription(
+    prescription,
+    'Nouvelle ordonnance',
+    'Votre médecin a envoyé une ordonnance à la pharmacie.',
+  );
   return res.status(201).json({ prescription: prescriptionResponse(prescription) });
 }
 
@@ -241,6 +300,13 @@ async function changePrescriptionStatus(req, res) {
     prescription.status = 'rejected'; prescription.rejectionReason = reason;
   } else throw new HttpError(400, 'Unsupported prescription action.');
   await prescription.save();
+  await notifyPrescription(
+    prescription,
+    action === 'validate' ? 'Ordonnance validée' : 'Ordonnance refusée',
+    action === 'validate'
+      ? 'La pharmacie a validé votre ordonnance.'
+      : `La pharmacie a refusé votre ordonnance. Motif : ${prescription.rejectionReason}`,
+  );
   return res.json({ prescription: prescriptionResponse(prescription) });
 }
 
@@ -249,7 +315,9 @@ async function dispense(req, res) {
   if (!prescription) throw new HttpError(404, 'Prescription not found.');
   if (!['pending', 'validated'].includes(prescription.status)) throw new HttpError(409, 'This prescription cannot be dispensed.');
   const now = new Date();
+  const previousStatus = prescription.status;
   const changed = [];
+  let dispensation = null;
   try {
     for (const item of prescription.medications) {
       const medication = await Medication.findOneAndUpdate(
@@ -261,14 +329,25 @@ async function dispense(req, res) {
     }
     prescription.status = 'dispensed'; prescription.dispensedAt = now;
     await prescription.save();
-    const dispensation = await Dispensation.create({
+    dispensation = await Dispensation.create({
       prescriptionId: prescription._id, pharmacistId: req.user._id, pharmacyId: prescription.pharmacyId,
-      medications: prescription.medications.map((item) => ({ medicationId: item.medicationId, name: item.name, quantity: item.quantity })),
+      medications: prescription.medications.map((item) => ({ medicationId: item.medicationId, name: item.name, dosage: item.dosage, quantity: item.quantity })),
       dispensedAt: now,
     });
+    await notifyPrescription(
+      prescription,
+      'Ordonnance délivrée',
+      'Votre ordonnance a été délivrée par la pharmacie.',
+    );
     return res.status(201).json({ dispensation: dispensationResponse(dispensation), prescription: prescriptionResponse(prescription) });
   } catch (error) {
     await Promise.all(changed.map((item) => Medication.updateOne({ _id: item.medication._id }, { $inc: { stockQuantity: item.quantity } })));
+    if (dispensation) await Dispensation.deleteOne({ _id: dispensation._id });
+    if (prescription.status === 'dispensed') {
+      prescription.status = previousStatus;
+      prescription.dispensedAt = null;
+      await prescription.save();
+    }
     throw error;
   }
 }
@@ -339,4 +418,5 @@ module.exports = {
   listPrescriptions, createPrescription, changePrescriptionStatus, dispense,
   listDispensations, listRequests, changeRequestStatus, listOrders, createOrder,
   receiveOrder, alerts, medicationResponse, prescriptionResponse,
+  listPatientPrescriptions,
 };

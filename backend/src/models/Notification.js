@@ -12,6 +12,12 @@ const notificationSchema = new mongoose.Schema({
     ref: 'Appointment',
     required: true,
   },
+  prescriptionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Prescription',
+    default: null,
+    index: true,
+  },
   title: { type: String, required: true, trim: true, maxlength: 120 },
   message: { type: String, required: true, trim: true, maxlength: 500 },
   readAt: { type: Date, default: null },

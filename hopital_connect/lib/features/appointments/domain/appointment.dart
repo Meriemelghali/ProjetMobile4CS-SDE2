@@ -2,6 +2,7 @@ enum AppointmentStatus {
   pending('En attente', 'pending'),
   accepted('Confirmé', 'accepted'),
   inProgress('En cours', 'in_progress'),
+  completed('Terminée', 'completed'),
   proposed('Créneau proposé', 'proposed'),
   rejected('Refusé', 'rejected'),
   cancelled('Annulé', 'cancelled');
@@ -15,6 +16,7 @@ enum AppointmentStatus {
     'pending' => AppointmentStatus.pending,
     'accepted' => AppointmentStatus.accepted,
     'in_progress' => AppointmentStatus.inProgress,
+    'completed' => AppointmentStatus.completed,
     'proposed' => AppointmentStatus.proposed,
     'rejected' => AppointmentStatus.rejected,
     'cancelled' => AppointmentStatus.cancelled,

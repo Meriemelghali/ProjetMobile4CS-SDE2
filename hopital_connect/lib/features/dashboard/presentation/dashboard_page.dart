@@ -25,6 +25,9 @@ import '../../planning/data/shift_service.dart';
 import '../../planning/domain/shift.dart';
 import '../../planning/presentation/planning_tab.dart';
 import '../../pharmacy/presentation/pharmacy_tab.dart';
+import '../../pharmacy/presentation/doctor_prescriptions_tab.dart';
+import '../../pharmacy/data/pharmacy_service.dart';
+import '../../pharmacy/domain/pharmacy_models.dart';
 import '../../services/data/service_service.dart';
 import '../../services/domain/hospital_service.dart';
 import '../../services/presentation/service_form_dialog.dart';
@@ -67,6 +70,7 @@ class _DashboardPageState extends State<DashboardPage> {
   List<Appointment> _appointments = const [];
   List<HospitalIntervention> _interventions = const [];
   List<AppointmentNotification> _notifications = const [];
+  List<Prescription> _prescriptions = const [];
   List<AppointmentDoctor> _doctors = const [];
   List<ServiceColleague> _colleagues = const [];
   PatientRecordType _followUpType = PatientRecordType.all;
@@ -140,6 +144,7 @@ class _DashboardPageState extends State<DashboardPage> {
           AppointmentService().list(),
           ServiceService().list(),
           NotificationService().list(),
+          PharmacyService().myPrescriptions(),
         ]);
         if (!mounted) return;
         setState(() {
@@ -152,6 +157,7 @@ class _DashboardPageState extends State<DashboardPage> {
           _interventions = const [];
           _doctors = const [];
           _notifications = results[2] as List<AppointmentNotification>;
+          _prescriptions = results[3] as List<Prescription>;
           _colleagues = const [];
         });
         return;
@@ -190,6 +196,7 @@ class _DashboardPageState extends State<DashboardPage> {
           _doctors = const [];
           _colleagues = const [];
           _notifications = const [];
+          _prescriptions = const [];
         });
         return;
       }
@@ -1065,9 +1072,18 @@ class _DashboardPageState extends State<DashboardPage> {
               interventions: _interventions,
               shifts: _shifts,
               handovers: _handovers,
-              onOpenPlanning: () => setState(() => _selectedIndex = 1),
+              onOpenPlanning: () => setState(() => _selectedIndex = 3),
               onHandoverTap: _showHandoverDetails,
             ),
+            AppointmentsTab(
+              appointments: _appointments,
+              isPatient: false,
+              onEdit: _editAppointment,
+              onStatusChange: _updateAppointmentStatus,
+              canManageStatus: true,
+              currentUserId: _user.id,
+            ),
+            DoctorPrescriptionsTab(appointments: _appointments),
             DoctorPlanningTab(
               appointments: _appointments,
               interventions: _interventions,
@@ -1096,7 +1112,7 @@ class _DashboardPageState extends State<DashboardPage> {
             HospitalTab(
               canManage: false,
               user: _user,
-              isVisible: _selectedIndex == 5,
+              isVisible: _selectedIndex == 7,
               hospitalsApi: HospitalResourceService(),
               services: _services,
               users: _users,
@@ -1272,6 +1288,18 @@ class _DashboardPageState extends State<DashboardPage> {
               selectedIcon: Icon(Icons.grid_view_rounded),
               label: 'Accueil',
             ),
+            if (isDoctor)
+              const NavigationDestination(
+                icon: Icon(Icons.event_available_outlined),
+                selectedIcon: Icon(Icons.event_available),
+                label: 'Rendez-vous',
+              ),
+            if (isDoctor)
+              const NavigationDestination(
+                icon: Icon(Icons.receipt_long_outlined),
+                selectedIcon: Icon(Icons.receipt_long),
+                label: 'Ordonnances',
+              ),
             const NavigationDestination(
               icon: Icon(Icons.calendar_month_outlined),
               selectedIcon: Icon(Icons.calendar_month_rounded),
@@ -1341,6 +1369,8 @@ class _DashboardPageState extends State<DashboardPage> {
         : isDoctor
         ? const [
             'Accueil',
+            'Rendez-vous',
+            'Ordonnances',
             'Planning',
             'Service',
             'Transmissions',
@@ -1360,7 +1390,7 @@ class _DashboardPageState extends State<DashboardPage> {
         : isSecretary
         ? 2
         : isDoctor
-        ? 5
+        ? 7
         : !isPatient && !isDoctor
         ? 4
         : -1;

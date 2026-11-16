@@ -8,6 +8,7 @@ const {
 } = require('./services/defaultDoctorService');
 const Room = require('./models/Room');
 const OperatingRoom = require('./models/OperatingRoom');
+const Prescription = require('./models/Prescription');
 const { ensureDefaultPharmacy } = require('./services/defaultPharmacy');
 
 async function start() {
@@ -24,6 +25,10 @@ async function start() {
   const removedOperatingRoomIndexes = await OperatingRoom.syncIndexes();
   if (removedOperatingRoomIndexes.length > 0) {
     console.log('Synchronized operating room indexes.');
+  }
+  const removedPrescriptionIndexes = await Prescription.syncIndexes();
+  if (removedPrescriptionIndexes.length > 0) {
+    console.log('Synchronized prescription indexes.');
   }
   const createdDefaultHospital = await ensureDefaultHospital();
   if (createdDefaultHospital) {
