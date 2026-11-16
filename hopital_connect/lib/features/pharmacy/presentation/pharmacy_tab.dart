@@ -283,7 +283,7 @@ class _PharmacyTabState extends State<PharmacyTab>
                     : item.patientName,
               ),
               subtitle: Text(
-                '${item.medications.map((line) => '${line.name} x${line.quantity}').join(', ')}\n${item.status.name}${item.rejectionReason.isEmpty ? '' : ' · ${item.rejectionReason}'}${item.patientAllergies.isEmpty ? '' : '\nAllergies : ${item.patientAllergies.join(', ')}'}',
+                '${item.medications.map(_lineLabel).join(', ')}\n${item.status.name}${item.rejectionReason.isEmpty ? '' : ' · ${item.rejectionReason}'}${item.patientAllergies.isEmpty ? '' : '\nAllergies : ${item.patientAllergies.join(', ')}'}',
               ),
               isThreeLine: true,
               trailing: PopupMenuButton<String>(
@@ -325,7 +325,7 @@ class _PharmacyTabState extends State<PharmacyTab>
             child: ListTile(
               title: Text('Service ${item.serviceId}'),
               subtitle: Text(
-                '${item.medications.map((line) => '${line.name} x${line.quantity}').join(', ')} · ${item.status}',
+                '${item.medications.map(_lineLabel).join(', ')} · ${item.status}',
               ),
               trailing: item.status == 'pending'
                   ? PopupMenuButton<String>(
@@ -373,7 +373,7 @@ class _PharmacyTabState extends State<PharmacyTab>
             child: ListTile(
               title: Text(item.supplier),
               subtitle: Text(
-                '${item.medications.map((line) => '${line.name} x${line.quantity}').join(', ')} · ${item.status}',
+                '${item.medications.map(_lineLabel).join(', ')} · ${item.status}',
               ),
               trailing: item.status == 'ordered'
                   ? TextButton(
@@ -399,11 +399,7 @@ class _PharmacyTabState extends State<PharmacyTab>
             child: ListTile(
               leading: const Icon(Icons.history),
               title: Text('Ordonnance ${item.prescriptionId}'),
-              subtitle: Text(
-                item.medications
-                    .map((line) => '${line.name} x${line.quantity}')
-                    .join(', '),
-              ),
+              subtitle: Text(item.medications.map(_lineLabel).join(', ')),
               trailing: Text(
                 item.dispensedAt == null ? '' : _date(item.dispensedAt!),
               ),
@@ -432,7 +428,7 @@ class _PharmacyTabState extends State<PharmacyTab>
       content: Text(
         'Patient : ${item.patientName}\nMédecin : ${item.doctorName}\n'
         'Allergies : ${item.patientAllergies.isEmpty ? 'Aucune renseignée' : item.patientAllergies.join(', ')}\n\n'
-        'Traitement :\n${item.medications.map((line) => '• ${line.name} — ${line.quantity}').join('\n')}',
+        'Traitement :\n${item.medications.map((line) => '• ${_lineLabel(line)}').join('\n')}',
       ),
       actions: [
         TextButton(
@@ -526,6 +522,9 @@ class _PharmacyTabState extends State<PharmacyTab>
 
   String _date(DateTime date) =>
       '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+
+  String _lineLabel(PharmacyLine line) =>
+      '${line.name}${line.dosage.isEmpty ? '' : ' ${line.dosage}'} x${line.quantity}';
 }
 
 class _MedicationDialog extends StatefulWidget {

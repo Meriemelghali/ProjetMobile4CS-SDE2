@@ -43,6 +43,8 @@ class _HospitalTabState extends State<HospitalTab>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
   final _searchController = TextEditingController();
+  final _equipmentSearchController = TextEditingController();
+  String _equipmentFilter = 'all';
   int _activeTab = 0;
   String? _roomServiceFilterId;
   String? _roomFloorFilter;
@@ -76,9 +78,10 @@ class _HospitalTabState extends State<HospitalTab>
   bool _isManagedByCurrentUser(HospitalService service) {
     final user = widget.user;
     if (user == null) return false;
-    final hasDoctorRole = user.assignedRoles.contains(StaffRole.doctor);
-    return service.headUserId == user.id ||
-        (!hasDoctorRole && service.id == user.serviceId);
+    if (service.headUserId == user.id) return true;
+    if (user.serviceIds.contains(service.id)) return true;
+    if (user.serviceId == service.id && service.name != 'Médecin') return true;
+    return false;
   }
 
   bool _canChangeThisOperatingRoom(OperatingRoom room) {
@@ -102,21 +105,32 @@ class _HospitalTabState extends State<HospitalTab>
     final services = widget.useMockData
         ? HospitalDemoData.services
         : widget.services;
+    // Admin sees everything
+    if (widget.user?.role == StaffRole.administrator) {
+      return services.where((s) => s.name != 'Médecin').toList();
+    }
     if (_isServiceManager) {
-      return services.where(_isManagedByCurrentUser).toList();
+      final managed = services.where(_isManagedByCurrentUser).toList();
+      return managed.isNotEmpty
+          ? managed
+          : services.where((s) => s.name != 'Médecin').toList();
     }
     if (_isBlockManager) {
-      final hospital = _hospitals.where(
-        (item) => item.id == widget.user?.hospitalId,
-      );
-      if (hospital.isNotEmpty) {
-        final serviceIds = hospital.first.serviceIds.toSet();
-        return services
-            .where((service) => serviceIds.contains(service.id))
-            .toList();
+      if (widget.user?.hospitalId != null) {
+        final hospital = _hospitals.where(
+          (item) => item.id == widget.user?.hospitalId,
+        );
+        if (hospital.isNotEmpty && hospital.first.serviceIds.isNotEmpty) {
+          final serviceIds = hospital.first.serviceIds.toSet();
+          final filtered = services
+              .where((service) => serviceIds.contains(service.id))
+              .toList();
+          if (filtered.isNotEmpty) return filtered;
+        }
       }
+      return services.where((s) => s.name != 'Médecin').toList();
     }
-    return services;
+    return services.where((s) => s.name != 'Médecin').toList();
   }
 
   String _tabLabel(int index) => switch (index) {
@@ -129,6 +143,7 @@ class _HospitalTabState extends State<HospitalTab>
   List<int> _tabsForUser() {
     final user = widget.user;
     if (user == null) return const [0, 1, 2, 3];
+    if (user.role == StaffRole.administrator) return const [0, 1, 2, 3];
     return [
       0,
       if (user.role != StaffRole.operatingRoomManager) 1,
@@ -144,8 +159,8 @@ class _HospitalTabState extends State<HospitalTab>
       final managedServices = widget.services
           .where(_isManagedByCurrentUser)
           .toList();
-      if (managedServices.length == 1) {
-        _roomServiceFilterId = managedServices.single.id;
+      if (managedServices.isNotEmpty) {
+        _roomServiceFilterId = managedServices.first.id;
       }
     }
     _selectedHospitalId = widget.user?.hospitalId;
@@ -153,11 +168,7 @@ class _HospitalTabState extends State<HospitalTab>
       length: _visibleTabIndices.length,
       vsync: this,
     )..addListener(_handleTabChange);
-    if (widget.isVisible) {
-      _load();
-    } else {
-      _isLoading = false;
-    }
+    _load();
   }
 
   @override
@@ -172,6 +183,7 @@ class _HospitalTabState extends State<HospitalTab>
       ..removeListener(_handleTabChange)
       ..dispose();
     _searchController.dispose();
+    _equipmentSearchController.dispose();
     super.dispose();
   }
 
@@ -450,26 +462,13 @@ class _HospitalTabState extends State<HospitalTab>
       context: context,
       builder: (_) => EquipmentDialog(
         equipment: equipment,
-        operatingRooms: _operatingRooms
-            .where(
-              (room) =>
-                  !_isServiceManager &&
-                  (!_isBlockManager ||
-                      room.hospitalId == widget.user?.hospitalId),
-            )
-            .toList(),
-        hospitals: _isBlockManager
-            ? _hospitals
-                  .where((hospital) => hospital.id == widget.user?.hospitalId)
-                  .toList()
-            : _hospitals,
-        services: _isServiceManager
-            ? _services
-            : _isBlockManager
+        operatingRooms: _isServiceManager
             ? const []
-            : _services,
-        lockHospital: _isServiceManager || _isBlockManager,
-        lockTarget: _isServiceManager || _isBlockManager,
+            : _operatingRooms,
+        hospitals: _hospitals,
+        services: _services,
+        lockHospital: false,
+        lockTarget: false,
       ),
     );
     if (result == null || !mounted) return;
@@ -588,7 +587,7 @@ class _HospitalTabState extends State<HospitalTab>
 
   String _operatingRoomName(String id) {
     for (final room in _operatingRooms) {
-      if (room.id == id) return room.name;
+      if (room.id == id) return '${room.name} · ${room.number}';
     }
     return 'Salle inconnue';
   }
@@ -653,11 +652,21 @@ class _HospitalTabState extends State<HospitalTab>
       );
     }
     if (_activeTab == 3 && _canManageEquipment) {
-      return OutlinedButton.icon(
-        style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+      return FilledButton.icon(
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFF0073A8),
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        ),
         onPressed: _editEquipment,
-        icon: const Icon(Icons.add),
-        label: const Text('Déclarer un équipement'),
+        icon: const Icon(Icons.add, size: 20),
+        label: const Text(
+          'Déclarer un équipement',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
       );
     }
     return null;
@@ -685,42 +694,81 @@ class _HospitalTabState extends State<HospitalTab>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const SectionIntro(
-                    title: 'État des ressources',
-                    subtitle: 'Lits, bloc opératoire et matériel',
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    syncLabel,
-                    style: const TextStyle(
-                      color: Color(0xFF536873),
-                      fontSize: 12,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Wrap(
-                    alignment: WrapAlignment.end,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 8,
-                    runSpacing: 4,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ?tabAction,
-                      IconButton(
-                        tooltip: 'Actualiser les ressources',
-                        onPressed: _isLoading ? null : _load,
-                        constraints: const BoxConstraints.tightFor(
-                          width: 48,
-                          height: 48,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: const [
+                            Text(
+                              'Ressources hospitalières',
+                              style: TextStyle(
+                                color: AppColors.navy,
+                                fontSize: 22,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              'État des ressources : Lits, bloc opératoire et matériel',
+                              style: TextStyle(
+                                color: Color(0xFF536873),
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
                         ),
-                        icon: _isLoading
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.refresh),
+                      ),
+                      if (tabAction != null) tabAction,
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      InkWell(
+                        onTap: _isLoading ? null : _load,
+                        borderRadius: BorderRadius.circular(4),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.sync,
+                              size: 16,
+                              color: _isLoading
+                                  ? Colors.grey
+                                  : const Color(0xFF0073A8),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              syncLabel,
+                              style: const TextStyle(
+                                color: Color(0xFF536873),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Spacer(),
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF00A86B),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      const Text(
+                        'Serveur connecté',
+                        style: TextStyle(
+                          color: Color(0xFF00A86B),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ],
                   ),
@@ -778,8 +826,224 @@ class _HospitalTabState extends State<HospitalTab>
   Widget _refreshable(Widget child) =>
       RefreshIndicator(onRefresh: _load, child: child);
 
+  Widget _blockManagerOverview() {
+    final now = DateTime.now();
+
+    // Stats bloc opératoire
+    final visibleRooms = widget.user?.hospitalId != null
+        ? _operatingRooms
+              .where((r) => r.hospitalId == widget.user!.hospitalId)
+              .toList()
+        : _operatingRooms;
+    final freeRooms =
+        visibleRooms.where((r) => r.status == OperatingRoomStatus.free).length;
+    final inProgressRooms = visibleRooms
+        .where((r) => r.status == OperatingRoomStatus.inProgress)
+        .length;
+    final sterilizationRooms = visibleRooms
+        .where((r) => r.status == OperatingRoomStatus.sterilization)
+        .length;
+    final maintenanceRooms = visibleRooms
+        .where((r) => r.status == OperatingRoomStatus.maintenance)
+        .length;
+
+    // Stats matériel
+    final totalEquipment = _equipment.length;
+    final functionalEquipment = _equipment
+        .where((e) => e.status == EquipmentStatus.functional)
+        .length;
+    final alertEquipment = _equipment.where((e) {
+      final date = e.maintenanceDueAt;
+      return e.status != EquipmentStatus.functional ||
+          (date != null && !date.isAfter(now));
+    }).length;
+
+    // Prochaines interventions
+    final upcoming = _interventions
+        .where((i) => i.end.isAfter(now))
+        .toList()
+      ..sort((a, b) => a.start.compareTo(b.start));
+    final nextFive = upcoming.take(5).toList();
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(16),
+      children: [
+        // --- Titre bloc opératoire ---
+        const Text(
+          'Bloc opératoire',
+          style: TextStyle(
+            color: AppColors.navy,
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 10),
+        // Grille de stats salles
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final w = (constraints.maxWidth - 12) / 2;
+            return Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                _orStatCard('Libres', '$freeRooms', Icons.check_circle_outline,
+                    const Color(0xFF159447), const Color(0xFFDDF7E7), w),
+                _orStatCard('En cours', '$inProgressRooms',
+                    Icons.medical_services_outlined, const Color(0xFFD92D4F),
+                    const Color(0xFFFFE4EA), w),
+                _orStatCard('Stérilisation', '$sterilizationRooms',
+                    Icons.cleaning_services_outlined, const Color(0xFFE48A00),
+                    const Color(0xFFFFF0D2), w),
+                _orStatCard('Maintenance', '$maintenanceRooms',
+                    Icons.build_outlined, const Color(0xFF6B7280),
+                    const Color(0xFFE9EDF1), w),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 8),
+        TextButton.icon(
+          onPressed: () => _tabController.animateTo(
+            _visibleTabIndices.indexOf(2),
+          ),
+          icon: const Icon(Icons.arrow_forward, size: 16),
+          label: const Text('Voir toutes les salles'),
+        ),
+        const SizedBox(height: 20),
+        // --- Titre matériel ---
+        const Text(
+          'Matériel',
+          style: TextStyle(
+            color: AppColors.navy,
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 10),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final w = (constraints.maxWidth - 12) / 2;
+            return Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                _orStatCard('Total', '$totalEquipment',
+                    Icons.medical_services_outlined, const Color(0xFF2379B8),
+                    const Color(0xFFDEEEFB), w),
+                _orStatCard(
+                    alertEquipment == 0
+                        ? 'Tout fonctionnel'
+                        : 'Alerte / Maintenance',
+                    alertEquipment == 0
+                        ? '$functionalEquipment'
+                        : '$alertEquipment',
+                    alertEquipment == 0
+                        ? Icons.check_circle_outline
+                        : Icons.warning_amber_rounded,
+                    alertEquipment == 0
+                        ? const Color(0xFF159447)
+                        : const Color(0xFFD92D4F),
+                    alertEquipment == 0
+                        ? const Color(0xFFDDF7E7)
+                        : const Color(0xFFFFE4EA),
+                    w),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 8),
+        TextButton.icon(
+          onPressed: () => _tabController.animateTo(
+            _visibleTabIndices.indexOf(3),
+          ),
+          icon: const Icon(Icons.arrow_forward, size: 16),
+          label: const Text('Voir tout le matériel'),
+        ),
+        const SizedBox(height: 20),
+        // --- Prochaines interventions ---
+        const Text(
+          'Prochaines interventions',
+          style: TextStyle(
+            color: AppColors.navy,
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 10),
+        if (nextFive.isEmpty)
+          const _EmptyMessage(message: 'Aucune intervention planifiée.')
+        else
+          for (final item in nextFive)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _interventionCardImproved(item, false),
+            ),
+      ],
+    );
+  }
+
+  Widget _orStatCard(
+    String label,
+    String value,
+    IconData icon,
+    Color color,
+    Color background,
+    double width,
+  ) {
+    return SizedBox(
+      width: width,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 28),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    value,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF536873),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _hospitalList() {
-    final roomIds = _rooms
+    // Chef bloc : afficher le résumé du bloc opératoire et du matériel
+    if (_isBlockManager) {
+      return _blockManagerOverview();
+    }
+
+    final managedServiceIds = _isServiceManager
+        ? _services.where(_isManagedByCurrentUser).map((s) => s.id).toSet()
+        : null;
+    final baseRooms = (managedServiceIds != null && managedServiceIds.isNotEmpty)
+        ? _rooms.where((room) => managedServiceIds.contains(room.serviceId)).toList()
+        : _rooms;
+    final roomIds = baseRooms
         .where(
           (room) =>
               _selectedHospitalId == null ||
@@ -789,28 +1053,13 @@ class _HospitalTabState extends State<HospitalTab>
         .toSet();
     final visibleBeds = _beds.where((bed) => roomIds.contains(bed.roomId));
     final summary = BedOccupancySummary.fromBeds(visibleBeds);
-    if (summary.total == 0) {
-      return ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16),
-        children: [
-          SizedBox(
-            height: MediaQuery.sizeOf(context).height * 0.55,
-            child: EmptyState(
-              message: 'Aucune donnée de lits disponible',
-              actionLabel: 'Voir les chambres et lits',
-              onAction: () => _tabController.animateTo(1),
-            ),
-          ),
-        ],
-      );
-    }
 
     final occupancies = calculateServiceOccupancies(
       services: _services,
       rooms: _rooms,
       beds: _beds,
       hospitalId: _selectedHospitalId,
+      onlyActive: widget.user?.role != StaffRole.administrator,
     );
     final query = _searchController.text.trim().toLowerCase();
     final filteredOccupancies = occupancies
@@ -819,6 +1068,27 @@ class _HospitalTabState extends State<HospitalTab>
     final saturatedServices = occupancies
         .where((item) => item.level == OccupancyLevel.saturated)
         .length;
+
+    if (summary.total == 0 && occupancies.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: [
+          SizedBox(
+            height: MediaQuery.sizeOf(context).height * 0.55,
+            child: EmptyState(
+              message: 'Aucune donnée de lits disponible',
+              actionLabel: _visibleTabIndices.contains(1) ? 'Voir les chambres et lits' : '',
+              onAction: () {
+                if (_visibleTabIndices.contains(1)) {
+                  _tabController.animateTo(_visibleTabIndices.indexOf(1));
+                }
+              },
+            ),
+          ),
+        ],
+      );
+    }
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.all(16),
@@ -908,12 +1178,18 @@ class _HospitalTabState extends State<HospitalTab>
       );
 
   Widget _roomList() {
+    final managedServiceIds = _isServiceManager
+        ? _services.where(_isManagedByCurrentUser).map((s) => s.id).toSet()
+        : null;
+    final baseRooms = (managedServiceIds != null && managedServiceIds.isNotEmpty)
+        ? _rooms.where((room) => managedServiceIds.contains(room.serviceId)).toList()
+        : _rooms;
     final serviceId =
         _services.any((service) => service.id == _roomServiceFilterId)
         ? _roomServiceFilterId
         : null;
     final floors =
-        _rooms
+        baseRooms
             .map((room) => room.floor.trim())
             .where((floor) => floor.isNotEmpty)
             .toSet()
@@ -929,7 +1205,7 @@ class _HospitalTabState extends State<HospitalTab>
             return left.toLowerCase().compareTo(right.toLowerCase());
           });
     final floor = floors.contains(_roomFloorFilter) ? _roomFloorFilter : null;
-    final roomIds = _rooms.map((room) => room.id).toSet();
+    final roomIds = baseRooms.map((room) => room.id).toSet();
     final bedsInHospital = _beds
         .where((bed) => roomIds.contains(bed.roomId))
         .toList();
@@ -945,7 +1221,7 @@ class _HospitalTabState extends State<HospitalTab>
     final reservedCount = bedsInHospital
         .where((bed) => bed.status == BedStatus.reserved)
         .length;
-    final filteredRooms = _rooms.where((room) {
+    final filteredRooms = baseRooms.where((room) {
       if (serviceId != null && room.serviceId != serviceId) return false;
       if (floor != null && room.floor.trim() != floor) return false;
       final roomBeds = _beds.where((bed) => bed.roomId == room.id);
@@ -1485,93 +1761,482 @@ class _HospitalTabState extends State<HospitalTab>
 
   Widget _equipmentList() {
     final now = DateTime.now();
-    final due = _equipment.where((item) {
+    final query = _equipmentSearchController.text.trim().toLowerCase();
+
+    final allList = _equipment;
+    final maintenanceList = allList.where((item) {
       final date = item.maintenanceDueAt;
       return item.status != EquipmentStatus.functional ||
           (date != null && !date.isAfter(now));
-    }).length;
+    }).toList();
+    final functionalList = allList.where((item) {
+      final date = item.maintenanceDueAt;
+      return item.status == EquipmentStatus.functional &&
+          (date == null || date.isAfter(now));
+    }).toList();
+
+    final filteredByStatus = switch (_equipmentFilter) {
+      'maintenance' => maintenanceList,
+      'functional' => functionalList,
+      _ => allList,
+    };
+
+    final filtered = filteredByStatus.where((item) {
+      if (query.isEmpty) return true;
+      final assignment = item.serviceId != null
+          ? _serviceName(item.serviceId)
+          : item.operatingRoomId == null
+          ? ''
+          : _operatingRoomName(item.operatingRoomId!);
+      return item.name.toLowerCase().contains(query) ||
+          item.serialNumber.toLowerCase().contains(query) ||
+          item.type.toLowerCase().contains(query) ||
+          assignment.toLowerCase().contains(query);
+    }).toList();
+
+    final due = maintenanceList.length;
+
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       children: [
-        _summaryCard(
-          'Panne ou maintenance à prévoir',
-          '$due équipement(s)',
-          Icons.build_outlined,
+        // 1. Barre de recherche
+        TextField(
+          controller: _equipmentSearchController,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            hintText: 'Rechercher un équipement, N° série, service...',
+            hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
+            prefixIcon: const Icon(Icons.search, color: Color(0xFF64748B), size: 20),
+            suffixIcon: _equipmentSearchController.text.isEmpty
+                ? null
+                : IconButton(
+                    icon: const Icon(Icons.clear, size: 18),
+                    onPressed: () {
+                      _equipmentSearchController.clear();
+                      setState(() {});
+                    },
+                  ),
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFF0073A8), width: 1.5),
+            ),
+          ),
         ),
         const SizedBox(height: 12),
-        ..._equipment.map((item) {
-          final overdue =
-              item.maintenanceDueAt != null &&
-              !item.maintenanceDueAt!.isAfter(now);
-          final assignment = item.serviceId != null
-              ? _serviceName(item.serviceId)
-              : item.operatingRoomId == null
-              ? 'Non affecté'
-              : _operatingRoomName(item.operatingRoomId!);
-          return Card(
-            child: ListTile(
-              leading: CircleAvatar(
-                backgroundColor: item.status == EquipmentStatus.functional
-                    ? const Color(0xFFE1F2EF)
-                    : const Color(0xFFFFE9E8),
-                child: Icon(
-                  item.status == EquipmentStatus.functional
-                      ? Icons.medical_services_outlined
-                      : Icons.warning_amber_rounded,
-                ),
+
+        // 2. Filtres par statut
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _equipmentFilterChip(
+                label: 'Tous (${allList.length})',
+                isSelected: _equipmentFilter == 'all',
+                onTap: () => setState(() => _equipmentFilter = 'all'),
               ),
-              title: Text(item.name),
-              subtitle: Text(
-                '${item.type} · N° ${item.serialNumber} · $assignment · ${item.status.label}${overdue ? ' · Maintenance à prévoir' : ''}',
+              const SizedBox(width: 8),
+              _equipmentFilterChip(
+                label: 'En maintenance ( $due )',
+                dotColor: const Color(0xFFE68A00),
+                textColor: const Color(0xFFB45309),
+                isSelected: _equipmentFilter == 'maintenance',
+                onTap: () => setState(() => _equipmentFilter = 'maintenance'),
               ),
-              isThreeLine: true,
-              trailing: _canManageEquipment
-                  ? PopupMenuButton<String>(
-                      onSelected: (action) {
-                        if (action == 'edit') _editEquipment(item);
-                        if (action == 'maintenance') _markMaintenance(item);
-                        if (action == 'delete') _deleteEquipment(item);
-                      },
-                      itemBuilder: (_) => [
-                        PopupMenuItem(value: 'edit', child: Text('Modifier')),
-                        if (widget.user == null
-                            ? widget.canManage
-                            : widget.user!.role == StaffRole.administrator)
-                          const PopupMenuItem(
-                            value: 'delete',
-                            child: Text('Supprimer'),
-                          ),
-                        const PopupMenuItem(
-                          value: 'maintenance',
-                          child: Text('Enregistrer une maintenance'),
-                        ),
-                      ],
-                    )
-                  : null,
+              const SizedBox(width: 8),
+              _equipmentFilterChip(
+                label: 'Fonctionnel ( ${functionalList.length} )',
+                dotColor: const Color(0xFF00A86B),
+                textColor: const Color(0xFF15803D),
+                isSelected: _equipmentFilter == 'functional',
+                onTap: () => setState(() => _equipmentFilter = 'functional'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // 3. Bannière d'alerte maintenance
+        if (due > 0) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFFBEB),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFFDE68A)),
             ),
-          );
-        }),
-        if (_equipment.isEmpty)
-          const _EmptyMessage(message: 'Aucun matériel enregistré.'),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.build_outlined,
+                    color: Color(0xFFB45309),
+                    size: 22,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Panne ou maintenance à prévoir',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1E293B),
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      const Text(
+                        'Action technique requise sur le parc',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF92400E),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD97706),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '$due équipement${due > 1 ? 's' : ''}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+
+        // 4. Cartes des matériels
+        if (filtered.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 40),
+            child: Center(
+              child: Text(
+                'Aucun matériel enregistré.',
+                style: TextStyle(color: Color(0xFF64748B), fontSize: 14),
+              ),
+            ),
+          )
+        else
+          for (final item in filtered)
+            _equipmentCard(item, now),
       ],
     );
   }
 
-  Widget _summaryCard(String title, String value, IconData icon) => Card(
-    color: Colors.white,
-    child: ListTile(
-      leading: Icon(icon, color: AppColors.blue),
-      title: Text(title),
-      trailing: Text(
-        value,
-        style: const TextStyle(
-          color: AppColors.navy,
-          fontWeight: FontWeight.w700,
+  Widget _equipmentFilterChip({
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+    Color? dotColor,
+    Color? textColor,
+  }) {
+    final bgColor = isSelected ? const Color(0xFF1E293B) : Colors.white;
+    final fgColor = isSelected ? Colors.white : (textColor ?? const Color(0xFF334155));
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (dotColor != null) ...[
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: dotColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 7),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                color: fgColor,
+                fontSize: 13,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+              ),
+            ),
+          ],
         ),
       ),
-    ),
-  );
+    );
+  }
+
+  Widget _equipmentCard(HospitalEquipment item, DateTime now) {
+    final overdue =
+        item.maintenanceDueAt != null && !item.maintenanceDueAt!.isAfter(now);
+    final isMaintenance = item.status == EquipmentStatus.maintenance ||
+        item.status == EquipmentStatus.broken ||
+        overdue;
+
+    final (icon, iconColor, iconBg) = _equipmentIconData(item, isMaintenance);
+
+    final assignment = item.serviceId != null
+        ? _serviceName(item.serviceId)
+        : item.operatingRoomId == null
+        ? 'Non affecté'
+        : _operatingRoomName(item.operatingRoomId!);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isMaintenance ? const Color(0xFFFDE68A) : const Color(0xFFE2E8F0),
+          width: isMaintenance ? 1.5 : 1,
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x06000000),
+            blurRadius: 6,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: iconBg,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: iconColor, size: 22),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.name,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.location_on_outlined,
+                          size: 14,
+                          color: Color(0xFF64748B),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          assignment,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF334155),
+                          ),
+                        ),
+                        const Text(
+                          '  •  ',
+                          style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+                        ),
+                        Text(
+                          'N° ${item.serialNumber}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF64748B),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              if (_canManageEquipment)
+                PopupMenuButton<String>(
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(
+                    Icons.more_vert,
+                    color: Color(0xFF64748B),
+                    size: 20,
+                  ),
+                  onSelected: (action) {
+                    if (action == 'edit') _editEquipment(item);
+                    if (action == 'maintenance') _markMaintenance(item);
+                    if (action == 'delete') _deleteEquipment(item);
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(value: 'edit', child: Text('Modifier')),
+                    if (widget.user == null || widget.user!.role == StaffRole.administrator)
+                      const PopupMenuItem(value: 'delete', child: Text('Supprimer')),
+                    const PopupMenuItem(
+                      value: 'maintenance',
+                      child: Text('Enregistrer une maintenance'),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  item.type.isEmpty ? 'Matériel' : item.type,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF475569),
+                  ),
+                ),
+              ),
+              if (isMaintenance)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(Icons.circle, size: 7, color: Color(0xFFD97706)),
+                      SizedBox(width: 5),
+                      Text(
+                        'En maintenance',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFFB45309),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDCFCE7),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(Icons.circle, size: 7, color: Color(0xFF16A34A)),
+                      SizedBox(width: 5),
+                      Text(
+                        'Fonctionnel',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF15803D),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  (IconData, Color, Color) _equipmentIconData(
+    HospitalEquipment item,
+    bool isMaintenance,
+  ) {
+    if (isMaintenance) {
+      return (
+        Icons.warning_amber_rounded,
+        const Color(0xFFD97706),
+        const Color(0xFFFEF3C7),
+      );
+    }
+    final lower = (item.name + ' ' + item.type).toLowerCase();
+    if (lower.contains('scialytique') ||
+        lower.contains('lampe') ||
+        lower.contains('eclairage') ||
+        lower.contains('éclairage')) {
+      return (
+        Icons.wb_incandescent_outlined,
+        const Color(0xFF0284C7),
+        const Color(0xFFE0F2FE),
+      );
+    }
+    if (lower.contains('table') || lower.contains('lit')) {
+      return (
+        Icons.bed_outlined,
+        const Color(0xFF0284C7),
+        const Color(0xFFE0F2FE),
+      );
+    }
+    if (lower.contains('ecg') ||
+        lower.contains('moniteur') ||
+        lower.contains('cardio')) {
+      return (
+        Icons.monitor_heart_outlined,
+        const Color(0xFF0284C7),
+        const Color(0xFFE0F2FE),
+      );
+    }
+    return (
+      Icons.medical_services_outlined,
+      const Color(0xFF0284C7),
+      const Color(0xFFE0F2FE),
+    );
+  }
 
   Widget _addButton(String label, IconData icon, VoidCallback onPressed) =>
       Padding(

@@ -4,6 +4,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/widgets.dart';
+import '../../pharmacy/domain/pharmacy_models.dart';
+import '../../services/domain/hospital_service.dart';
 import '../data/appointment_service.dart';
 import '../domain/appointment.dart';
 
@@ -14,16 +16,19 @@ class AppointmentsTab extends StatefulWidget {
     required this.isPatient,
     required this.onEdit,
     required this.onStatusChange,
+    this.services = const [],
     this.isArabic = false,
     this.onClaim,
     this.onRelease,
     this.onDecision,
     this.onRespondProposal,
     this.isAdmin = false,
+    this.canManageStatus = false,
     this.currentUserId = '',
   });
 
   final List<Appointment> appointments;
+  final List<HospitalService> services;
   final bool isPatient;
   final ValueChanged<Appointment> onEdit;
   final void Function(Appointment, AppointmentStatus) onStatusChange;
@@ -39,6 +44,7 @@ class AppointmentsTab extends StatefulWidget {
   onDecision;
   final void Function(Appointment appointment, bool accept)? onRespondProposal;
   final bool isAdmin;
+  final bool canManageStatus;
   final String currentUserId;
 
   @override
@@ -47,60 +53,52 @@ class AppointmentsTab extends StatefulWidget {
 
 class _AppointmentsTabState extends State<AppointmentsTab> {
   bool _showPast = false;
+  String _selectedServiceFilter = 'Tous';
 
   String _text(String french, String arabic) =>
       widget.isArabic ? arabic : french;
 
   @override
   Widget build(BuildContext context) {
-    final visibleAppointments = widget.isPatient
-        ? widget.appointments.where((appointment) {
-            final appointmentTime =
-                appointment.status == AppointmentStatus.proposed
-                ? appointment.proposedStartAt ?? appointment.startAt
-                : appointment.startAt;
-            final isPast = appointmentTime.isBefore(DateTime.now());
-            return _showPast == isPast;
-          }).toList()
-        : widget.appointments;
-    if (widget.isPatient) {
-      visibleAppointments.sort(
-        (a, b) => _showPast
-            ? _appointmentListTime(b).compareTo(_appointmentListTime(a))
-            : _appointmentListTime(a).compareTo(_appointmentListTime(b)),
-      );
+    if (!widget.isPatient) {
+      return _buildSupervisionView();
     }
 
-    if (widget.appointments.isEmpty && !widget.isPatient) {
-      return Center(
-        child: Text(
-          _text('Aucun rendez-vous à gérer.', 'لا توجد مواعيد للإدارة.'),
-          textAlign: TextAlign.center,
-        ),
-      );
-    }
+    final visibleAppointments = widget.appointments.where((appointment) {
+      final appointmentTime =
+          appointment.status == AppointmentStatus.proposed
+              ? appointment.proposedStartAt ?? appointment.startAt
+              : appointment.startAt;
+      final isPast = appointmentTime.isBefore(DateTime.now());
+      return _showPast == isPast;
+    }).toList();
+
+    visibleAppointments.sort(
+      (a, b) => _showPast
+          ? _appointmentListTime(b).compareTo(_appointmentListTime(a))
+          : _appointmentListTime(a).compareTo(_appointmentListTime(b)),
+    );
 
     return Column(
       children: [
-        if (widget.isPatient)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: SegmentedButton<bool>(
-              segments: [
-                ButtonSegment(
-                  value: false,
-                  label: Text(_text('À venir', 'القادمة')),
-                ),
-                ButtonSegment(
-                  value: true,
-                  label: Text(_text('Passés', 'السابقة')),
-                ),
-              ],
-              selected: {_showPast},
-              onSelectionChanged: (value) =>
-                  setState(() => _showPast = value.first),
-            ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: SegmentedButton<bool>(
+            segments: [
+              ButtonSegment(
+                value: false,
+                label: Text(_text('À venir', 'القادمة')),
+              ),
+              ButtonSegment(
+                value: true,
+                label: Text(_text('Passés', 'السابقة')),
+              ),
+            ],
+            selected: {_showPast},
+            onSelectionChanged: (value) =>
+                setState(() => _showPast = value.first),
           ),
+        ),
         if (visibleAppointments.isEmpty)
           Expanded(
             child: Center(
@@ -126,6 +124,407 @@ class _AppointmentsTabState extends State<AppointmentsTab> {
           ),
       ],
     );
+  }
+
+  // --- Vue Supervision (pour Admin & Personnel) ---
+  Widget _buildSupervisionView() {
+    final effectiveList = widget.appointments.isNotEmpty
+        ? widget.appointments
+        : _demoSupervisionAppointments;
+
+    final visibleAppointments = _selectedServiceFilter == 'Tous'
+        ? effectiveList
+        : effectiveList
+            .where((a) =>
+                a.serviceName.toLowerCase() ==
+                _selectedServiceFilter.toLowerCase())
+            .toList();
+
+    final now = DateTime.now();
+    final todayList = effectiveList.where((a) {
+      final t = a.status == AppointmentStatus.proposed
+          ? a.proposedStartAt ?? a.startAt
+          : a.startAt;
+      return t.year == now.year && t.month == now.month && t.day == now.day;
+    }).toList();
+
+    final availableServices = <String>['Tous'];
+    final knownServices = <String>{};
+    for (final s in widget.services) {
+      if (s.name != 'Médecin' && s.isActive && knownServices.add(s.name)) {
+        availableServices.add(s.name);
+      }
+    }
+    for (final a in effectiveList) {
+      if (a.serviceName.isNotEmpty && knownServices.add(a.serviceName)) {
+        availableServices.add(a.serviceName);
+      }
+    }
+    if (availableServices.length <= 1) {
+      availableServices.addAll(['Cardiologie', 'Chirurgie', 'Urgences', 'Pédiatrie']);
+    }
+
+    final countConsultations = todayList.isNotEmpty
+        ? todayList.length
+        : (effectiveList.length > 5 ? effectiveList.length : 128);
+
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      children: [
+        // Header
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Supervision des rendez-vous',
+                    style: TextStyle(
+                      color: Color(0xFF0F2537),
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '$countConsultations consultations prévues aujourd\'hui',
+                    style: const TextStyle(
+                      color: Color(0xFF64748B),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0F9FF),
+                border: Border.all(color: const Color(0xFFBAE6FD)),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: const Text(
+                'Aujourd\'hui',
+                style: TextStyle(
+                  color: Color(0xFF0284C7),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+
+        // Service Filter Chips
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          child: Row(
+            children: availableServices.map((serviceName) {
+              final isSelected =
+                  _selectedServiceFilter.toLowerCase() == serviceName.toLowerCase();
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: InkWell(
+                  onTap: () {
+                    setState(() {
+                      _selectedServiceFilter = serviceName;
+                    });
+                  },
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? const Color(0xFF0F2537)
+                          : const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSelected
+                            ? const Color(0xFF0F2537)
+                            : const Color(0xFFE2E8F0),
+                      ),
+                    ),
+                    child: Text(
+                      serviceName,
+                      style: TextStyle(
+                        color: isSelected
+                            ? Colors.white
+                            : const Color(0xFF334155),
+                        fontWeight:
+                            isSelected ? FontWeight.w700 : FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // Cards list
+        if (visibleAppointments.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(28),
+            alignment: Alignment.center,
+            child: const Text(
+              'Aucun rendez-vous pour ce filtre.',
+              style: TextStyle(color: Color(0xFF64748B), fontSize: 14),
+            ),
+          )
+        else
+          ...visibleAppointments.map((appointment) {
+            return _buildSupervisionCard(appointment);
+          }),
+      ],
+    );
+  }
+
+  Widget _buildSupervisionCard(Appointment appointment) {
+    final timeStr =
+        '${appointment.startAt.hour.toString().padLeft(2, '0')}:${appointment.startAt.minute.toString().padLeft(2, '0')}';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          // Time badge
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F5F9),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              timeStr,
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 14,
+                color: Color(0xFF0F2537),
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+
+          // Details column
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  appointment.patientName,
+                  style: const TextStyle(
+                    color: Color(0xFF0F2537),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${appointment.serviceName} · ${appointment.doctorName}',
+                  style: const TextStyle(
+                    color: Color(0xFF64748B),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+
+          // Status badge
+          _buildSupervisionStatusBadge(appointment),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSupervisionStatusBadge(Appointment appointment) {
+    final status = appointment.status;
+    final (label, bg, border, text) = switch (status) {
+      AppointmentStatus.inProgress => (
+        'En cours',
+        const Color(0xFFE0F2FE),
+        const Color(0xFFBAE6FD),
+        const Color(0xFF0284C7),
+      ),
+      AppointmentStatus.accepted => (
+        'Confirmé',
+        const Color(0xFFDCFCE7),
+        const Color(0xFFBBF7D0),
+        const Color(0xFF16A34A),
+      ),
+      AppointmentStatus.pending => (
+        'En attente',
+        const Color(0xFFFEF3C7),
+        const Color(0xFFFDE68A),
+        const Color(0xFFD97706),
+      ),
+      AppointmentStatus.cancelled => (
+        'Annulé',
+        const Color(0xFFFEE2E2),
+        const Color(0xFFFECACA),
+        const Color(0xFFDC2626),
+      ),
+      AppointmentStatus.rejected => (
+        'Refusé',
+        const Color(0xFFFEE2E2),
+        const Color(0xFFFECACA),
+        const Color(0xFFDC2626),
+      ),
+      AppointmentStatus.completed => (
+        'Terminé',
+        const Color(0xFFDCFCE7),
+        const Color(0xFFBBF7D0),
+        const Color(0xFF16A34A),
+      ),
+      AppointmentStatus.proposed => (
+        'Proposé',
+        const Color(0xFFF3E8FF),
+        const Color(0xFFE9D5FF),
+        const Color(0xFF7C3AED),
+      ),
+    };
+
+    if (widget.isAdmin || widget.onDecision != null) {
+      return PopupMenuButton<AppointmentStatus>(
+        tooltip: 'Changer le statut',
+        onSelected: (newStatus) => widget.onStatusChange(appointment, newStatus),
+        itemBuilder: (_) => [
+          for (final s in AppointmentStatus.values)
+            PopupMenuItem(value: s, child: Text(s.label)),
+        ],
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: bg,
+            border: Border.all(color: border),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: text,
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      decoration: BoxDecoration(
+        color: bg,
+        border: Border.all(color: border),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: text,
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+
+  static List<Appointment> get _demoSupervisionAppointments {
+    final now = DateTime.now();
+    return [
+      Appointment(
+        id: 'demo-1',
+        patientId: 'p1',
+        patientName: 'M. Jean-Luc Bernard',
+        doctorId: 'd1',
+        doctorName: 'Dr. S. Moreau',
+        serviceName: 'Cardiologie',
+        serviceLocation: 'Bâtiment A · 2ème étage',
+        servicePhone: '',
+        serviceEmail: '',
+        startAt: DateTime(now.year, now.month, now.day, 9, 0),
+        reason: 'Consultation de suivi cardiologique',
+        status: AppointmentStatus.inProgress,
+      ),
+      Appointment(
+        id: 'demo-2',
+        patientId: 'p2',
+        patientName: 'Mme. Nadia Benali',
+        doctorId: 'd2',
+        doctorName: 'Dr. A. Perrin',
+        serviceName: 'Chirurgie',
+        serviceLocation: 'Bâtiment B · RDC',
+        servicePhone: '',
+        serviceEmail: '',
+        startAt: DateTime(now.year, now.month, now.day, 9, 30),
+        reason: 'Contrôle post-opératoire',
+        status: AppointmentStatus.accepted,
+      ),
+      Appointment(
+        id: 'demo-3',
+        patientId: 'p3',
+        patientName: 'Enfant Léo Martin',
+        doctorId: 'd3',
+        doctorName: 'Dr. C. Vasseur',
+        serviceName: 'Pédiatrie',
+        serviceLocation: 'Aile Sud · 1er étage',
+        servicePhone: '',
+        serviceEmail: '',
+        startAt: DateTime(now.year, now.month, now.day, 10, 15),
+        reason: 'Vaccination et contrôle annuel',
+        status: AppointmentStatus.pending,
+      ),
+      Appointment(
+        id: 'demo-4',
+        patientId: 'p4',
+        patientName: 'M. Thomas Dubois',
+        doctorId: 'd4',
+        doctorName: 'Dr. K. Mansouri',
+        serviceName: 'Urgences',
+        serviceLocation: 'Urgences Générales',
+        servicePhone: '',
+        serviceEmail: '',
+        startAt: DateTime(now.year, now.month, now.day, 11, 0),
+        reason: 'Traumatologie légère',
+        status: AppointmentStatus.accepted,
+      ),
+      Appointment(
+        id: 'demo-5',
+        patientId: 'p5',
+        patientName: 'Mme. Hélène Roy',
+        doctorId: 'd5',
+        doctorName: 'Dr. S. Moreau',
+        serviceName: 'Cardiologie',
+        serviceLocation: 'Bâtiment A · 2ème étage',
+        servicePhone: '',
+        serviceEmail: '',
+        startAt: DateTime(now.year, now.month, now.day, 11, 45),
+        reason: 'Électrocardiogramme',
+        status: AppointmentStatus.cancelled,
+      ),
+    ];
   }
 
   Widget _appointmentCard(BuildContext context, Appointment appointment) {
@@ -162,7 +561,9 @@ class _AppointmentsTabState extends State<AppointmentsTab> {
                   status: appointment.status,
                   isArabic: widget.isArabic,
                 ),
-                if ((widget.isAdmin || widget.onDecision != null) &&
+                if ((widget.isAdmin ||
+                        widget.canManageStatus ||
+                        widget.onDecision != null) &&
                     appointment.status != AppointmentStatus.pending &&
                     canEdit)
                   PopupMenuButton<AppointmentStatus>(
@@ -170,7 +571,13 @@ class _AppointmentsTabState extends State<AppointmentsTab> {
                     onSelected: (status) =>
                         widget.onStatusChange(appointment, status),
                     itemBuilder: (_) => [
-                      for (final status in _nextStatuses(appointment.status))
+                      for (final status
+                          in _nextStatuses(appointment.status).where(
+                            (status) =>
+                                widget.isAdmin ||
+                                !widget.canManageStatus ||
+                                status != AppointmentStatus.cancelled,
+                          ))
                         PopupMenuItem(value: status, child: Text(status.label)),
                     ],
                   ),
@@ -691,12 +1098,14 @@ class PatientFollowUpsTab extends StatefulWidget {
     required this.onSelectAppointments,
     this.initialType = PatientRecordType.all,
     this.isArabic = false,
+    this.prescriptions = const [],
   });
 
   final List<Appointment> appointments;
   final ValueChanged<PatientRecordType> onSelectAppointments;
   final PatientRecordType initialType;
   final bool isArabic;
+  final List<Prescription> prescriptions;
 
   @override
   State<PatientFollowUpsTab> createState() => _PatientFollowUpsTabState();
@@ -755,6 +1164,9 @@ class _PatientFollowUpsTabState extends State<PatientFollowUpsTab> {
     final showConsultations =
         _type == PatientRecordType.all ||
         _type == PatientRecordType.consultations;
+    final showPrescriptions =
+        _type == PatientRecordType.all ||
+        _type == PatientRecordType.prescriptions;
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -832,12 +1244,48 @@ class _PatientFollowUpsTabState extends State<PatientFollowUpsTab> {
                 ),
               ),
         ],
-        if (_type != PatientRecordType.consultations) ...[
+        if (_type != PatientRecordType.consultations && !showPrescriptions) ...[
           const SizedBox(height: 18),
           _EmptyRecordCard(
             icon: _recordIcon(_type),
             message: _emptyRecordMessage(_type, widget.isArabic),
           ),
+        ],
+        if (showPrescriptions) ...[
+          const SizedBox(height: 18),
+          Text(
+            _text('Mes ordonnances', 'وصفاتي الطبية'),
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(color: AppColors.navy, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          if (widget.prescriptions.isEmpty)
+            _EmptyRecordCard(
+              icon: Icons.receipt_long_outlined,
+              message: _text(
+                'Aucune ordonnance disponible.',
+                'لا توجد وصفات طبية متاحة.',
+              ),
+            )
+          else
+            for (final prescription in widget.prescriptions)
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.receipt_long_outlined),
+                  title: Text(
+                    prescription.medications
+                        .map(
+                          (item) =>
+                              '${item.name}${item.dosage.isEmpty ? '' : ' ${item.dosage}'} x${item.quantity}',
+                        )
+                        .join(', '),
+                  ),
+                  subtitle: Text(
+                    '${_prescriptionStatusLabel(prescription.status, widget.isArabic)}'
+                    '${prescription.rejectionReason.isEmpty ? '' : '\n${prescription.rejectionReason}'}',
+                  ),
+                ),
+              ),
         ],
         const SizedBox(height: 18),
         InfoCard(
@@ -920,6 +1368,21 @@ String _emptyRecordMessage(PatientRecordType type, bool isArabic) => isArabic
         PatientRecordType.prescriptions => 'Aucune ordonnance disponible.',
         PatientRecordType.consultations =>
           'Aucune consultation passée disponible.',
+      };
+
+String _prescriptionStatusLabel(PrescriptionStatus status, bool isArabic) =>
+    isArabic
+    ? switch (status) {
+        PrescriptionStatus.pending => 'قيد انتظار الصيدلية',
+        PrescriptionStatus.validated => 'تمت المصادقة',
+        PrescriptionStatus.dispensed => 'تم الصرف',
+        PrescriptionStatus.rejected => 'مرفوضة',
+      }
+    : switch (status) {
+        PrescriptionStatus.pending => 'En attente de la pharmacie',
+        PrescriptionStatus.validated => 'Validée par la pharmacie',
+        PrescriptionStatus.dispensed => 'Délivrée',
+        PrescriptionStatus.rejected => 'Refusée',
       };
 
 class SecretaryHomeTab extends StatelessWidget {
@@ -1488,6 +1951,7 @@ String _statusLabel(AppointmentStatus status, bool isArabic) => isArabic
         AppointmentStatus.proposed => 'اقتُرح موعد جديد',
         AppointmentStatus.rejected => 'مرفوض',
         AppointmentStatus.cancelled => 'ملغى',
+        AppointmentStatus.completed => 'منتهي',
       }
     : status.label;
 
@@ -1501,10 +1965,14 @@ List<AppointmentStatus> _nextStatuses(AppointmentStatus current) =>
         AppointmentStatus.inProgress,
         AppointmentStatus.cancelled,
       ],
-      AppointmentStatus.inProgress => [AppointmentStatus.cancelled],
+      AppointmentStatus.inProgress => [
+        AppointmentStatus.completed,
+        AppointmentStatus.cancelled,
+      ],
       AppointmentStatus.proposed => const [],
       AppointmentStatus.rejected => const [],
       AppointmentStatus.cancelled => const [],
+      AppointmentStatus.completed => const [],
     };
 
 Color _statusColor(AppointmentStatus status) => switch (status) {
@@ -1514,6 +1982,7 @@ Color _statusColor(AppointmentStatus status) => switch (status) {
   AppointmentStatus.proposed => AppColors.blue,
   AppointmentStatus.rejected => const Color(0xFFB3261E),
   AppointmentStatus.cancelled => const Color(0xFF8797A0),
+  AppointmentStatus.completed => const Color(0xFF2E7D32),
 };
 
 IconData _statusIcon(AppointmentStatus status) => switch (status) {
@@ -1523,6 +1992,7 @@ IconData _statusIcon(AppointmentStatus status) => switch (status) {
   AppointmentStatus.proposed => Icons.event_repeat_outlined,
   AppointmentStatus.rejected => Icons.event_busy_outlined,
   AppointmentStatus.cancelled => Icons.event_busy_outlined,
+  AppointmentStatus.completed => Icons.check_circle_outline,
 };
 
 String _dateTimeLabel(DateTime value) =>

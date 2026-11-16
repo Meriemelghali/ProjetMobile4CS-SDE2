@@ -183,14 +183,19 @@ async function list(req, res) {
     query._id = { $in: [...new Set(ids)] };
   }
   if (req.user.role === 'service_head') {
-    query._id = { $in: serviceIdsFor(req.user) };
+    const serviceIds = serviceIdsFor(req.user);
+    if (serviceIds.length > 0) {
+      query._id = { $in: serviceIds };
+    }
   }
   if (req.user.role === 'operating_room_manager') {
     const hospitalId = req.user.hospitalId;
-    if (!hospitalId) throw new HttpError(403, 'A hospital assignment is required.');
-    const hospital = await Hospital.findById(hospitalId).select('serviceIds');
-    if (!hospital) throw new HttpError(403, 'A hospital assignment is required.');
-    query._id = { $in: hospital.serviceIds };
+    if (hospitalId) {
+      const hospital = await Hospital.findById(hospitalId).select('serviceIds');
+      if (hospital && hospital.serviceIds && hospital.serviceIds.length > 0) {
+        query._id = { $in: hospital.serviceIds };
+      }
+    }
   }
   const services = await Service.find(query).sort({ name: 1 }).limit(200);
   return res.json({ services: await serviceResponses(services) });

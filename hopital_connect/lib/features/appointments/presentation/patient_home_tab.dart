@@ -345,64 +345,71 @@ class PatientHomeTab extends StatelessWidget {
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _text('Notifications', 'الإشعارات'),
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 20,
-                ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * .75,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _text('Notifications', 'الإشعارات'),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 20,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (pendingCount > 0)
+                    ListTile(
+                      leading: const Icon(Icons.pending_actions_outlined),
+                      title: Text(
+                        _text(
+                          'Vous avez $pendingCount demande(s) de RDV en attente.',
+                          'لديك $pendingCount طلب موعد قيد الانتظار.',
+                        ),
+                      ),
+                    ),
+                  if (tomorrowAppointment != null)
+                    ListTile(
+                      leading: const Icon(Icons.alarm_outlined),
+                      title: Text(
+                        _text(
+                          'Vous avez un rendez-vous demain.',
+                          'لديك موعد غداً.',
+                        ),
+                      ),
+                    ),
+                  for (final notification in notifications)
+                    ListTile(
+                      leading: Icon(
+                        notification.isRead
+                            ? Icons.notifications_none
+                            : Icons.notifications_active_outlined,
+                      ),
+                      title: Text(notification.titleFor(_isArabic)),
+                      subtitle: Text(notification.messageFor(_isArabic)),
+                    ),
+                  if (notifications.any((item) => !item.isRead) &&
+                      onMarkRead != null)
+                    Align(
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: TextButton(
+                        onPressed: onMarkRead,
+                        child: Text(
+                          _text('Tout marquer comme lu', 'تحديد الكل كمقروء'),
+                        ),
+                      ),
+                    ),
+                  if (pendingCount == 0 &&
+                      tomorrowAppointment == null &&
+                      notifications.isEmpty)
+                    Text(_text('Aucune notification.', 'لا توجد إشعارات.')),
+                ],
               ),
-              const SizedBox(height: 12),
-              if (pendingCount > 0)
-                ListTile(
-                  leading: const Icon(Icons.pending_actions_outlined),
-                  title: Text(
-                    _text(
-                      'Vous avez $pendingCount demande(s) de RDV en attente.',
-                      'لديك $pendingCount طلب موعد قيد الانتظار.',
-                    ),
-                  ),
-                ),
-              if (tomorrowAppointment != null)
-                ListTile(
-                  leading: const Icon(Icons.alarm_outlined),
-                  title: Text(
-                    _text(
-                      'Vous avez un rendez-vous demain.',
-                      'لديك موعد غداً.',
-                    ),
-                  ),
-                ),
-              for (final notification in notifications)
-                ListTile(
-                  leading: Icon(
-                    notification.isRead
-                        ? Icons.notifications_none
-                        : Icons.notifications_active_outlined,
-                  ),
-                  title: Text(notification.titleFor(_isArabic)),
-                  subtitle: Text(notification.messageFor(_isArabic)),
-                ),
-              if (notifications.any((item) => !item.isRead) &&
-                  onMarkRead != null)
-                Align(
-                  alignment: AlignmentDirectional.centerEnd,
-                  child: TextButton(
-                    onPressed: onMarkRead,
-                    child: Text(
-                      _text('Tout marquer comme lu', 'تحديد الكل كمقروء'),
-                    ),
-                  ),
-                ),
-              if (pendingCount == 0 &&
-                  tomorrowAppointment == null &&
-                  notifications.isEmpty)
-                Text(_text('Aucune notification.', 'لا توجد إشعارات.')),
-            ],
+            ),
           ),
         ),
       ),
@@ -728,6 +735,7 @@ class _AppointmentStatusChip extends StatelessWidget {
       AppointmentStatus.proposed => AppColors.blue,
       AppointmentStatus.rejected => const Color(0xFFB3261E),
       AppointmentStatus.cancelled => const Color(0xFF8797A0),
+      AppointmentStatus.completed => const Color(0xFF2E7D32),
     };
     final label = isArabic
         ? switch (status) {
@@ -737,6 +745,7 @@ class _AppointmentStatusChip extends StatelessWidget {
             AppointmentStatus.proposed => 'اقتُرح موعد جديد',
             AppointmentStatus.rejected => 'مرفوض',
             AppointmentStatus.cancelled => 'ملغى',
+            AppointmentStatus.completed => 'منتهي',
           }
         : status.label;
     return Chip(

@@ -2,6 +2,7 @@ class AppointmentNotification {
   const AppointmentNotification({
     required this.id,
     required this.appointmentId,
+    this.prescriptionId,
     required this.title,
     required this.message,
     required this.createdAt,
@@ -10,6 +11,7 @@ class AppointmentNotification {
 
   final String id;
   final String appointmentId;
+  final String? prescriptionId;
   final String title;
   final String message;
   final DateTime createdAt;
@@ -26,6 +28,10 @@ class AppointmentNotification {
       'Nouveau créneau proposé' => 'تم اقتراح موعد جديد',
       'Mise à jour de votre rendez-vous' => 'تم تحديث موعدك',
       'Proposition refusée' => 'تم رفض الاقتراح',
+      'Nouvelle ordonnance' => 'وصفة طبية جديدة',
+      'Ordonnance validée' => 'تمت المصادقة على الوصفة',
+      'Ordonnance refusée' => 'تم رفض الوصفة',
+      'Ordonnance délivrée' => 'تم صرف الوصفة',
       _ => title,
     };
   }
@@ -46,6 +52,14 @@ class AppointmentNotification {
         'وافقت على الموعد الجديد وتم تأكيد موعدك.',
       'Vous avez refusé le créneau proposé. La demande est annulée.' =>
         'رفضت الموعد المقترح وتم إلغاء الطلب.',
+      'Votre médecin a envoyé une ordonnance à la pharmacie.' =>
+        'أرسل طبيبك وصفة طبية إلى الصيدلية.',
+      'La pharmacie a validé votre ordonnance.' =>
+        'صادقت الصيدلية على وصفتك الطبية.',
+      'La pharmacie a refusé votre ordonnance.' =>
+        'رفضت الصيدلية وصفتك الطبية.',
+      'Votre ordonnance a été délivrée par la pharmacie.' =>
+        'تم صرف وصفتك الطبية من الصيدلية.',
       _ => 'تم تحديث حالة موعدك.',
     };
   }
@@ -54,6 +68,7 @@ class AppointmentNotification {
       AppointmentNotification(
         id: json['_id'] as String,
         appointmentId: json['appointmentId'] as String,
+        prescriptionId: json['prescriptionId'] as String?,
         title: json['title'] as String,
         message: json['message'] as String,
         createdAt: DateTime.parse(json['createdAt'] as String).toLocal(),
