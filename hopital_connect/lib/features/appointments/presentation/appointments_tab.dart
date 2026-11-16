@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../shared/widgets.dart';
+import '../../pharmacy/domain/pharmacy_models.dart';
 import '../../services/domain/hospital_service.dart';
 import '../data/appointment_service.dart';
 import '../domain/appointment.dart';
@@ -1947,7 +1948,6 @@ String _statusLabel(AppointmentStatus status, bool isArabic) => isArabic
         AppointmentStatus.pending => 'قيد الانتظار',
         AppointmentStatus.accepted => 'مؤكد',
         AppointmentStatus.inProgress => 'جارٍ',
-        AppointmentStatus.completed => 'مكتمل',
         AppointmentStatus.proposed => 'اقتُرح موعد جديد',
         AppointmentStatus.rejected => 'مرفوض',
         AppointmentStatus.cancelled => 'ملغى',
@@ -1969,7 +1969,6 @@ List<AppointmentStatus> _nextStatuses(AppointmentStatus current) =>
         AppointmentStatus.completed,
         AppointmentStatus.cancelled,
       ],
-      AppointmentStatus.completed => const [],
       AppointmentStatus.proposed => const [],
       AppointmentStatus.rejected => const [],
       AppointmentStatus.cancelled => const [],
@@ -1980,18 +1979,16 @@ Color _statusColor(AppointmentStatus status) => switch (status) {
   AppointmentStatus.pending => const Color(0xFFC17A00),
   AppointmentStatus.accepted => AppColors.blue,
   AppointmentStatus.inProgress => AppColors.mint,
-  AppointmentStatus.completed => const Color(0xFF2E7D32),
   AppointmentStatus.proposed => AppColors.blue,
   AppointmentStatus.rejected => const Color(0xFFB3261E),
   AppointmentStatus.cancelled => const Color(0xFF8797A0),
-  AppointmentStatus.completed => const Color(0xFF8797A0),
+  AppointmentStatus.completed => const Color(0xFF2E7D32),
 };
 
 IconData _statusIcon(AppointmentStatus status) => switch (status) {
   AppointmentStatus.pending => Icons.pending_actions_outlined,
   AppointmentStatus.accepted => Icons.event_available_outlined,
   AppointmentStatus.inProgress => Icons.medical_services_outlined,
-  AppointmentStatus.completed => Icons.check_circle_outline,
   AppointmentStatus.proposed => Icons.event_repeat_outlined,
   AppointmentStatus.rejected => Icons.event_busy_outlined,
   AppointmentStatus.cancelled => Icons.event_busy_outlined,
