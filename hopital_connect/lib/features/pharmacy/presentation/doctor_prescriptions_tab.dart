@@ -78,6 +78,7 @@ class _DoctorPrescriptionsTabState extends State<DoctorPrescriptionsTab> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Ordonnance envoyée à la pharmacie.')),
         );
+        await _load();
       }
     } on ApiException catch (error) {
       if (mounted) {
@@ -99,6 +100,8 @@ class _DoctorPrescriptionsTabState extends State<DoctorPrescriptionsTab> {
         ),
       );
     }
+    final today = DateTime.now();
+    final todayAppointments = _eligibleAppointments.where((item) => item.startAt.year == today.year && item.startAt.month == today.month && item.startAt.day == today.day).length;
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -111,6 +114,17 @@ class _DoctorPrescriptionsTabState extends State<DoctorPrescriptionsTab> {
           'Créez une ordonnance depuis une consultation en cours ou terminée.',
         ),
         const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(children: [
+              const Icon(Icons.event_available_outlined, color: Color(0xFF176B87)),
+              const SizedBox(width: 10),
+              Expanded(child: Text('$todayAppointments consultation(s) éligible(s) aujourd’hui · ${_eligibleAppointments.length} au total')),
+            ]),
+          ),
+        ),
+        const SizedBox(height: 12),
         FilledButton.icon(
           onPressed: _eligibleAppointments.isEmpty || _medications.isEmpty
               ? null

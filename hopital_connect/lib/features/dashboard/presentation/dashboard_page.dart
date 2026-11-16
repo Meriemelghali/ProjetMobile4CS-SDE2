@@ -26,6 +26,7 @@ import '../../planning/domain/shift.dart';
 import '../../planning/presentation/planning_tab.dart';
 import '../../pharmacy/presentation/pharmacy_tab.dart';
 import '../../pharmacy/presentation/doctor_prescriptions_tab.dart';
+import '../../pharmacy/presentation/pharmacy_request_tab.dart';
 import '../../pharmacy/data/pharmacy_service.dart';
 import '../../pharmacy/domain/pharmacy_models.dart';
 import '../../services/data/service_service.dart';
@@ -123,6 +124,7 @@ class _DashboardPageState extends State<DashboardPage> {
     'Mon service',
     'Transmissions',
     'Ressources hospitalières',
+    'Demande pharmacie',
     'Administration',
   ];
 
@@ -965,6 +967,14 @@ class _DashboardPageState extends State<DashboardPage> {
     final isPharmacist = _user.role == StaffRole.pharmacist;
     final isAdmin = _user.role == StaffRole.administrator;
     final isDoctor = _user.role == StaffRole.doctor;
+    final canRequestPharmacy = {
+      StaffRole.administrator,
+      StaffRole.doctor,
+      StaffRole.nurse,
+      StaffRole.secretary,
+      StaffRole.serviceHead,
+    }.contains(_user.role);
+    final requestServices = isAdmin ? _services : _assignedServicesFor(_user);
     final isNurse = _user.role == StaffRole.nurse;
     // Dossier médical : onglet ajouté en dernière position pour ne pas
     // décaler les index des onglets existants.
@@ -1072,7 +1082,7 @@ class _DashboardPageState extends State<DashboardPage> {
               interventions: _interventions,
               shifts: _shifts,
               handovers: _handovers,
-              onOpenPlanning: () => setState(() => _selectedIndex = 3),
+              onOpenPlanning: () => setState(() => _selectedIndex = 4),
               onHandoverTap: _showHandoverDetails,
             ),
             AppointmentsTab(
@@ -1084,6 +1094,7 @@ class _DashboardPageState extends State<DashboardPage> {
               currentUserId: _user.id,
             ),
             DoctorPrescriptionsTab(appointments: _appointments),
+            PharmacyRequestTab(user: _user, services: requestServices),
             DoctorPlanningTab(
               appointments: _appointments,
               interventions: _interventions,
@@ -1112,7 +1123,7 @@ class _DashboardPageState extends State<DashboardPage> {
             HospitalTab(
               canManage: false,
               user: _user,
-              isVisible: _selectedIndex == 7,
+              isVisible: _selectedIndex == 8,
               hospitalsApi: HospitalResourceService(),
               services: _services,
               users: _users,
@@ -1149,6 +1160,7 @@ class _DashboardPageState extends State<DashboardPage> {
               user: _user,
               useMockData: _useMockHospitalData,
             ),
+            PharmacyRequestTab(user: _user, services: requestServices),
           ]
         : <Widget>[
             HomeTab(
@@ -1181,6 +1193,8 @@ class _DashboardPageState extends State<DashboardPage> {
               user: _user,
               useMockData: _useMockHospitalData,
             ),
+            if (canRequestPharmacy)
+              PharmacyRequestTab(user: _user, services: requestServices),
             if (isAdmin)
               AdminTab(
                 usersCount: _users.length,
@@ -1268,6 +1282,11 @@ class _DashboardPageState extends State<DashboardPage> {
               selectedIcon: Icon(Icons.apartment),
               label: 'Hôpital',
             ),
+            NavigationDestination(
+              icon: Icon(Icons.medication_outlined),
+              selectedIcon: Icon(Icons.medication),
+              label: 'Demande pharmacie',
+            ),
           ]
         : isPharmacist
         ? const <NavigationDestination>[
@@ -1300,6 +1319,12 @@ class _DashboardPageState extends State<DashboardPage> {
                 selectedIcon: Icon(Icons.receipt_long),
                 label: 'Ordonnances',
               ),
+            if (isDoctor)
+              const NavigationDestination(
+                icon: Icon(Icons.medication_outlined),
+                selectedIcon: Icon(Icons.medication),
+                label: 'Demande pharmacie',
+              ),
             const NavigationDestination(
               icon: Icon(Icons.calendar_month_outlined),
               selectedIcon: Icon(Icons.calendar_month_rounded),
@@ -1326,6 +1351,12 @@ class _DashboardPageState extends State<DashboardPage> {
               selectedIcon: Icon(Icons.apartment),
               label: 'Hôpital',
             ),
+            if (canRequestPharmacy)
+              const NavigationDestination(
+                icon: Icon(Icons.medication_outlined),
+                selectedIcon: Icon(Icons.medication),
+                label: 'Demande pharmacie',
+              ),
             if (isAdmin)
               const NavigationDestination(
                 icon: Icon(Icons.admin_panel_settings_outlined),
@@ -1371,6 +1402,7 @@ class _DashboardPageState extends State<DashboardPage> {
             'Accueil',
             'Rendez-vous',
             'Ordonnances',
+            'Demande pharmacie',
             'Planning',
             'Service',
             'Transmissions',
@@ -1380,11 +1412,7 @@ class _DashboardPageState extends State<DashboardPage> {
           ]
         : isSecretary
         ? const ['Espace secrétaire', 'Rendez-vous', 'Ressources hospitalières']
-        : [
-            ..._titles.take(5),
-            if (isAdmin) ...['Administration', 'Rendez-vous'],
-            if (isNurse) 'Dossiers médicaux',
-          ];
+        : [..._titles, if (isAdmin) 'Rendez-vous'];
     final hospitalPageIndex = isPharmacist
         ? -1
         : isSecretary

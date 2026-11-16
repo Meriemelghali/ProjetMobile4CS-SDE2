@@ -70,6 +70,7 @@ class PharmacyService {
   Future<void> dispense(String id) async {
     await _api.post('/pharmacy/prescriptions/$id/dispense');
   }
+
   Future<Prescription> createPrescription(Map<String, Object?> body) async =>
       _item(
         await _api.post('/pharmacy/prescriptions', body: body),
@@ -89,6 +90,12 @@ class PharmacyService {
     'request',
     MedicationRequest.fromJson,
   );
+  Future<MedicationRequest> createRequest(Map<String, Object?> body) async =>
+      _item(
+        await _api.post('/pharmacy/requests', body: body),
+        'request',
+        MedicationRequest.fromJson,
+      );
   Future<SupplyOrder> createOrder(Map<String, Object?> body) async => _item(
     await _api.post('/pharmacy/orders', body: body),
     'order',
