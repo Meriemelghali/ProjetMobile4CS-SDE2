@@ -6,8 +6,9 @@ const { authorize } = require('../middleware/authorize');
 const router = express.Router();
 router.use(authenticate);
 router.get('/prescriptions/mine', authorize('patient'), controller.listPatientPrescriptions);
-router.get('/medications', authorize('admin', 'pharmacist', 'doctor'), controller.listMedications);
+router.get('/medications', authorize('admin', 'pharmacist', 'doctor', 'service_head', 'nurse', 'secretary'), controller.listMedications);
 router.post('/prescriptions', authorize('admin', 'pharmacist', 'doctor'), controller.createPrescription);
+router.post('/requests', authorize('admin', 'service_head', 'nurse', 'doctor', 'secretary'), controller.createRequest);
 router.use(authorize('admin', 'pharmacist'));
 
 router.get('/pharmacies', controller.listPharmacies);

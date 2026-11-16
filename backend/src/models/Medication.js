@@ -8,6 +8,7 @@ const medicationSchema = new mongoose.Schema({
   stockQuantity: { type: Number, required: true, min: 0 },
   alertThreshold: { type: Number, required: true, min: 0 },
   lot: { type: String, required: true, trim: true, maxlength: 80 },
+  barcode: { type: String, trim: true, maxlength: 80, default: '' },
   expirationDate: { type: Date, required: true },
   price: { type: Number, required: true, min: 0 },
   pharmacyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Pharmacy', required: true, index: true },

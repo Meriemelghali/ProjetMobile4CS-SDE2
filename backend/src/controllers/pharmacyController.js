@@ -65,6 +65,7 @@ function medicationResponse(item) {
     stockQuantity: item.stockQuantity,
     alertThreshold: item.alertThreshold,
     lot: item.lot,
+    barcode: item.barcode || '',
     expirationDate: item.expirationDate,
     price: item.price,
     pharmacyId: idOf(item.pharmacyId),
@@ -150,6 +151,7 @@ function parseMedicationFields(body, creating = false) {
   for (const [field, max] of [['name', 160], ['activeIngredient', 160], ['form', 80], ['dosage', 80], ['lot', 80]]) {
     if (creating || body[field] !== undefined) fields[field] = requireString(body[field], field, { max });
   }
+  if (body.barcode !== undefined) fields.barcode = requireString(body.barcode, 'barcode', { max: 80, min: 0 });
   if (creating || body.stockQuantity !== undefined) fields.stockQuantity = positiveNumber(body.stockQuantity, 'stockQuantity', { integer: true, allowZero: true });
   if (creating || body.alertThreshold !== undefined) fields.alertThreshold = positiveNumber(body.alertThreshold, 'alertThreshold', { integer: true, allowZero: true });
   if (creating || body.price !== undefined) fields.price = positiveNumber(body.price, 'price', { allowZero: true });
@@ -181,7 +183,17 @@ async function listPharmacies(_req, res) {
 }
 
 async function listMedications(req, res) {
-  const query = { ...scopeQuery(req.user) };
+  let query;
+  if (['admin', 'doctor'].includes(req.user.role)) {
+    query = {};
+  } else if (req.user.role === 'pharmacist') {
+    query = scopeQuery(req.user);
+  } else if (['service_head', 'nurse', 'secretary'].includes(req.user.role)) {
+    const pharmacy = await Pharmacy.findOne({ active: true }).sort({ name: 1 });
+    query = pharmacy ? { pharmacyId: pharmacy._id } : { _id: null };
+  } else {
+    pharmacyIdFor(req.user);
+  }
   if (req.query.search) query.$or = [
     { name: new RegExp(String(req.query.search).slice(0, 80), 'i') },
     { activeIngredient: new RegExp(String(req.query.search).slice(0, 80), 'i') },
@@ -193,16 +205,18 @@ async function listMedications(req, res) {
 
 async function createMedication(req, res) {
   const body = requireObject(req.body);
-  rejectUnknownFields(body, ['name', 'activeIngredient', 'form', 'dosage', 'stockQuantity', 'alertThreshold', 'lot', 'expirationDate', 'price', 'pharmacyId']);
+  rejectUnknownFields(body, ['name', 'activeIngredient', 'form', 'dosage', 'stockQuantity', 'alertThreshold', 'lot', 'barcode', 'expirationDate', 'price', 'pharmacyId']);
   const pharmacyId = pharmacyIdFor(req.user) || body.pharmacyId;
   if (!pharmacyId) throw new HttpError(400, 'pharmacyId is required.');
-  const medication = await Medication.create({ ...parseMedicationFields(body, true), pharmacyId: requireId(pharmacyId, 'pharmacyId') });
+  const scopedPharmacyId = requireId(pharmacyId, 'pharmacyId');
+  const fields = parseMedicationFields(body, true);
+  const medication = await Medication.create({ ...fields, pharmacyId: scopedPharmacyId });
   return res.status(201).json({ medication: medicationResponse(medication) });
 }
 
 async function updateMedication(req, res) {
   const body = requireObject(req.body);
-  rejectUnknownFields(body, ['name', 'activeIngredient', 'form', 'dosage', 'stockQuantity', 'alertThreshold', 'lot', 'expirationDate', 'price']);
+  rejectUnknownFields(body, ['name', 'activeIngredient', 'form', 'dosage', 'stockQuantity', 'alertThreshold', 'lot', 'barcode', 'expirationDate', 'price']);
   const medication = await findScopedMedication(req.user, req.params.id);
   const fields = parseMedicationFields(body);
   if (!Object.keys(fields).length) throw new HttpError(400, 'At least one field must be provided.');
@@ -362,6 +376,47 @@ async function listRequests(req, res) {
   return res.json({ requests: items.map(requestResponse) });
 }
 
+async function createRequest(req, res) {
+  const body = requireObject(req.body);
+  rejectUnknownFields(body, ['serviceId', 'pharmacyId', 'medications']);
+  const assignedServiceIds = [
+    ...(req.user.serviceIds || []).map((id) => id.toString()),
+    ...(req.user.serviceId ? [req.user.serviceId.toString()] : []),
+  ];
+  const requestedServiceId = body.serviceId
+    ? requireId(body.serviceId, 'serviceId')
+    : null;
+  if (req.user.role !== 'admin' && requestedServiceId &&
+      !assignedServiceIds.includes(requestedServiceId.toString())) {
+    throw new HttpError(403, 'You can only request medication for an assigned service.');
+  }
+  const serviceId = req.user.role === 'admin'
+    ? requireId(body.serviceId, 'serviceId')
+    : requestedServiceId || requireId(req.user.serviceId, 'serviceId');
+  const pharmacyId = body.pharmacyId
+    ? requireId(body.pharmacyId, 'pharmacyId')
+    : (await Pharmacy.findOne({ active: true }).sort({ name: 1 }))?._id;
+  if (!pharmacyId) throw new HttpError(400, 'An active pharmacy is required.');
+  if (!(await Pharmacy.exists({ _id: pharmacyId, active: true }))) {
+    throw new HttpError(409, 'The selected pharmacy is inactive.');
+  }
+  const items = parseItems(body.medications).map((item) => ({ ...item, name: item.name || '' }));
+  const medicationIds = new Set();
+  for (const item of items) {
+    if (medicationIds.has(item.medicationId.toString())) {
+      throw new HttpError(400, 'A medication cannot be repeated in the same request.');
+    }
+    medicationIds.add(item.medicationId.toString());
+    const medication = await Medication.findOne({ _id: item.medicationId, pharmacyId });
+    if (!medication) throw new HttpError(404, 'Medication not found in the selected pharmacy.');
+    item.name = medication.name;
+  }
+  const request = await MedicationRequest.create({
+    serviceId, pharmacyId, requestedBy: req.user._id, medications: items,
+  });
+  return res.status(201).json({ request: requestResponse(request) });
+}
+
 async function changeRequestStatus(req, res) {
   const body = requireObject(req.body);
   rejectUnknownFields(body, ['reason']);
@@ -370,9 +425,55 @@ async function changeRequestStatus(req, res) {
   const action = req.params.action;
   const next = { approve: 'approved', reject: 'rejected', deliver: 'delivered' }[action];
   if (!next) throw new HttpError(400, 'Unsupported request action.');
+  if (action === 'approve' && item.status !== 'pending') {
+    throw new HttpError(409, 'Only pending requests can be approved.');
+  }
+  if (action === 'reject' && !['pending', 'approved'].includes(item.status)) {
+    throw new HttpError(409, 'This request cannot be rejected.');
+  }
+  if (action === 'deliver' && item.status !== 'approved') {
+    throw new HttpError(409, 'Only approved requests can be delivered.');
+  }
   if (next === 'rejected') item.rejectionReason = requireString(body.reason, 'reason', { max: 500 });
+  if (action === 'deliver') {
+    const changed = [];
+    try {
+      for (const medicationItem of item.medications) {
+        const medication = await Medication.findOneAndUpdate(
+          {
+            _id: medicationItem.medicationId,
+            ...scopeQuery(req.user),
+            stockQuantity: { $gte: medicationItem.quantity },
+            expirationDate: { $gt: new Date() },
+          },
+          { $inc: { stockQuantity: -medicationItem.quantity } },
+          { new: true },
+        );
+        if (!medication) throw new HttpError(409, `Insufficient stock or expired lot for ${medicationItem.name}.`);
+        changed.push({ medication, quantity: medicationItem.quantity });
+      }
+    } catch (error) {
+      await Promise.all(changed.map((entry) => Medication.updateOne(
+        { _id: entry.medication._id },
+        { $inc: { stockQuantity: entry.quantity } },
+      )));
+      throw error;
+    }
+  }
+  const previousStatus = item.status;
   item.status = next;
-  await item.save();
+  try {
+    await item.save();
+  } catch (error) {
+    if (action === 'deliver') {
+      await Promise.all(item.medications.map((medicationItem) => Medication.updateOne(
+        { _id: medicationItem.medicationId },
+        { $inc: { stockQuantity: medicationItem.quantity } },
+      )));
+    }
+    item.status = previousStatus;
+    throw error;
+  }
   return res.json({ request: requestResponse(item) });
 }
 
@@ -385,8 +486,17 @@ async function createOrder(req, res) {
   const body = requireObject(req.body);
   rejectUnknownFields(body, ['supplier', 'medications', 'pharmacyId']);
   const pharmacyId = pharmacyIdFor(req.user) || body.pharmacyId;
+  if (!pharmacyId) throw new HttpError(400, 'pharmacyId is required.');
+  if (!(await Pharmacy.exists({ _id: pharmacyId, active: true }))) {
+    throw new HttpError(409, 'The selected pharmacy is inactive.');
+  }
   const items = parseItems(body.medications).map((item) => ({ ...item, name: item.name || '' }));
+  const medicationIds = new Set();
   for (const item of items) {
+    if (medicationIds.has(item.medicationId.toString())) {
+      throw new HttpError(400, 'A medication cannot be repeated in the same order.');
+    }
+    medicationIds.add(item.medicationId.toString());
     const medication = await findScopedMedication({ role: req.user.role, pharmacyId }, item.medicationId);
     item.name = medication.name;
   }
@@ -398,10 +508,34 @@ async function receiveOrder(req, res) {
   const order = await SupplyOrder.findOne({ _id: requireId(req.params.id, 'order id'), ...scopeQuery(req.user) });
   if (!order) throw new HttpError(404, 'Supply order not found.');
   if (order.status === 'received') throw new HttpError(409, 'Supply order is already received.');
-  for (const item of order.medications) {
-    await Medication.updateOne({ _id: item.medicationId, ...scopeQuery(req.user) }, { $inc: { stockQuantity: item.quantity } });
+  const changed = [];
+  try {
+    for (const item of order.medications) {
+      const medication = await Medication.findOneAndUpdate(
+        { _id: item.medicationId, ...scopeQuery(req.user) },
+        { $inc: { stockQuantity: item.quantity } },
+        { new: true },
+      );
+      if (!medication) throw new HttpError(404, `Medication not found for ${item.name}.`);
+      changed.push({ medication, quantity: item.quantity });
+    }
+  } catch (error) {
+    await Promise.all(changed.map((entry) => Medication.updateOne(
+      { _id: entry.medication._id },
+      { $inc: { stockQuantity: -entry.quantity } },
+    )));
+    throw error;
   }
-  order.status = 'received'; order.receivedAt = new Date(); await order.save();
+  order.status = 'received'; order.receivedAt = new Date();
+  try {
+    await order.save();
+  } catch (error) {
+    await Promise.all(changed.map((entry) => Medication.updateOne(
+      { _id: entry.medication._id },
+      { $inc: { stockQuantity: -entry.quantity } },
+    )));
+    throw error;
+  }
   return res.json({ order: orderResponse(order) });
 }
 
@@ -409,14 +543,14 @@ async function alerts(req, res) {
   const scope = scopeQuery(req.user);
   const now = new Date();
   const soon = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-  const medications = await Medication.find({ ...scope, $or: [{ stockQuantity: 0 }, { $expr: { $lte: ['$stockQuantity', '$alertThreshold'] } }, { expirationDate: { $gt: now, $lte: soon } }] }).sort({ expirationDate: 1 });
+  const medications = await Medication.find({ ...scope, $or: [{ stockQuantity: 0 }, { $expr: { $lte: ['$stockQuantity', '$alertThreshold'] } }, { expirationDate: { $lte: soon } }] }).sort({ expirationDate: 1 });
   return res.json({ medications: medications.map(medicationResponse) });
 }
 
 module.exports = {
   listPharmacies, listMedications, createMedication, updateMedication, adjustStock,
   listPrescriptions, createPrescription, changePrescriptionStatus, dispense,
-  listDispensations, listRequests, changeRequestStatus, listOrders, createOrder,
+  listDispensations, listRequests, createRequest, changeRequestStatus, listOrders, createOrder,
   receiveOrder, alerts, medicationResponse, prescriptionResponse,
   listPatientPrescriptions,
 };

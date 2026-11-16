@@ -20,6 +20,7 @@ class Medication {
     required this.stockQuantity,
     required this.alertThreshold,
     required this.lot,
+    this.barcode = '',
     required this.expirationDate,
     required this.price,
   });
@@ -32,12 +33,15 @@ class Medication {
   final int stockQuantity;
   final int alertThreshold;
   final String lot;
+  final String barcode;
   final DateTime expirationDate;
   final double price;
 
   bool get isOutOfStock => stockQuantity == 0;
   bool get isUnderThreshold => stockQuantity <= alertThreshold;
+  bool get isExpired => expirationDate.isBefore(DateTime.now());
   bool get isNearExpiry =>
+      !isExpired &&
       expirationDate.isBefore(DateTime.now().add(const Duration(days: 30)));
 
   factory Medication.fromJson(Map<String, dynamic> json) => Medication(
@@ -49,6 +53,7 @@ class Medication {
     stockQuantity: (json['stockQuantity'] as num?)?.toInt() ?? 0,
     alertThreshold: (json['alertThreshold'] as num?)?.toInt() ?? 0,
     lot: json['lot'] as String? ?? '',
+    barcode: json['barcode'] as String? ?? '',
     expirationDate:
         DateTime.tryParse(json['expirationDate'] as String? ?? '') ??
         DateTime(2100),
